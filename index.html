@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+
+<html lang="ru">
+
+<head>
+
+  <meta charset="UTF-8" />
+
+<meta
+ name="viewport"
+ content="width=device-width, initial-scale=1.0"
+/>
+
+  <title>
+    Каталог семян томатов
+  </title>
+
+  <link
+    rel="stylesheet"
+    href="style.css?v=11"
+  />
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Sans:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap" rel="stylesheet">
+
+<meta property="og:title"
+content="Каталог семян томатов">
+
+<meta property="og:description"
+content="Онлайн-заказ семян томатов. Сезон 2026–2027">
+
+<!-- <meta property="og:image"
+content="https://ТВОЙ-ДОМЕН/tomato/preview.jpg"> -->
+
+<meta property="og:type"
+content="website">
+<!-- 
+<meta property="og:url"
+content="https://ТВОЙ-ДОМЕН"> -->
+
+<meta name="twitter:card"
+content="summary_large_image">
+
+<link
+  rel="icon"
+  type="image/png"
+  sizes="192x192"
+  href="./tomato/favicon-192.png"
+>
+
+<link
+  rel="icon"
+  type="image/png"
+  sizes="512x512"
+  href="./tomato/favicon-512.png"
+>
+
+<link
+  rel="apple-touch-icon"
+  sizes="180x180"
+  href="./tomato/favicon-180.png"
+>
+
+
+</head>
+<div id="toast" class="toast"></div>
+<body>
+
+  <div id="loadingScreen">
+
+  <img
+  id="loadingTomato"
+  src="./tomato/tomato-breath.png"
+>
+<div class="loading-text">
+  Подготавливаем каталог томатов...
+</div>
+</div>
+
+  <div class="app">
+
+
+<!-- HEADER -->
+
+<div class="header">
+
+  <div class="logo">
+
+    <div class="logo-tomato-wrap">
+
+      <img
+        src="./tomato/tomato-idle.png"
+        class="logo-tomato"
+        id="logoTomato"
+      />
+
+      <div id="tomatoHearts"></div>
+
+    </div>
+
+    КАТАЛОГ ТОМАТОВ
+
+  </div>
+<div class="cart-card">
+  <div class="cart-top">
+
+    <div>
+
+      <div id="cartCount">
+        0 пак.
+      </div>
+
+      <div id="cartPrice">
+        0 ₽
+      </div>
+
+    </div>
+
+    <button id="openCartBtn">
+      Корзина
+    </button>
+
+  </div>
+
+  <div class="cart-divider"></div>
+
+  <div class="tools-row">
+
+  <div class="search-box">
+
+    <img
+      src="./tomato/search.png"
+      class="search-icon"
+    >
+
+    <input
+      type="text"
+      id="searchInput"
+      placeholder="Найти..."
+    >
+
+    <span
+  id="clearSearch"
+  class="clear-search"
+>
+</span>
+  </div>
+
+  <img
+    src="./tomato/info.png"
+    id="infoToggle"
+    class="info-tag"
+    alt="Важно"
+  >
+
+
+</div>
+
+
+  </div>
+
+
+
+</div>
+
+<!-- CATALOG -->
+
+<div
+  class="catalog"
+  id="catalog"
+></div>
+
+<div
+  id="catalogClosed"
+  class="catalog-closed"
+  style="display:none;"
+>
+
+  <img
+    src="./tomato/season-end.png"
+    alt="Томатик"
+  >
+
+  <h2>
+    Раздача семян завершена
+  </h2>
+
+  <p>
+    Спасибо за интерес к каталогу
+  </p>
+
+  <p class="season-text">
+    До встречи в новом сезоне 🌱
+  </p>
+
+</div>
+  <!-- CART -->
+
+  <div
+    class="cart-modal"
+    id="cartModal"
+  >
+
+
+<div class="cart-box">
+
+  <div class="cart-title">
+    Корзина
+  </div>
+
+  <div
+    class="cart-items"
+    id="cartItems"
+  ></div>
+
+  <div class="cart-footer">
+
+    <div>
+
+      <div id="cartFooterCount">
+        0 пак.
+      </div>
+
+      <div id="cartFooterPrice">
+        0 ₽
+      </div>
+
+    </div>
+
+    <button id="checkoutBtn">
+      Оформить
+    </button>
+
+  </div>
+
+</div>
+
+
+  </div>
+
+  <!-- CHECKOUT -->
+
+  <div
+    class="checkout-modal"
+    id="checkoutModal"
+  >
+
+
+<div class="checkout-box">
+
+  <div class="checkout-title">
+    Оформление заказа
+  </div>
+
+ <input
+  type="text"
+  id="clientName"
+  placeholder="Имя"
+/>
+ 
+
+  <input
+  type="text"
+  id="clientPhone"
+  placeholder="9991234567"
+  value="+7"
+/>
+
+
+<select id="pickupPoint" style="display:none">
+
+  <option
+    value=""
+    selected
+    disabled
+  >
+    Выберите точку выдачи
+  </option>
+
+  <option value="ozon">
+    Ozon
+  </option>
+
+  <option value="zhdanovsky">
+    Ждановский
+  </option>
+
+  <option value="sormovo">
+    Сормово
+  </option>
+
+  </select>
+
+<div class="pickup-dropdown">
+
+  <button
+    type="button"
+    class="pickup-trigger"
+    id="pickupTrigger"
+  >
+    Выберите точку выдачи
+  </button>
+
+  <div
+    class="pickup-menu"
+    id="pickupMenu"
+  >
+
+    <div
+      class="pickup-option"
+      data-value="ozon"
+    >
+      Ozon
+    </div>
+
+    <div
+      class="pickup-option"
+      data-value="zhdanovsky"
+    >
+      Ждановский
+    </div>
+
+    <div
+      class="pickup-option"
+      data-value="sormovo"
+    >
+      Сормово
+    </div>
+
+  </div>
+
+</div>
+
+<input
+  type="text"
+  id="pvzAddress"
+  placeholder="Адрес ПВЗ"
+  style="display:none"
+/>
+  <button id="createOrderBtn">
+    Создать заказ
+  </button>
+
+</div>
+
+
+  </div>
+
+ <!-- SHEET -->
+
+<!-- НАЙДЕН КЛИЕНТ -->
+
+<div
+  class="client-modal"
+  id="clientModal"
+>
+
+  <div class="client-modal-box">
+
+    <div class="client-found-title">
+       Найден предыдущий заказ
+    </div>
+
+    <div class="client-divider">
+
+  <div class="client-divider-line"></div>
+
+  <div class="client-divider-tomato">
+    🍅
+  </div>
+
+  <div class="client-divider-line"></div>
+
+</div>
+
+    <div id="clientFoundInfo"></div>
+
+    <div class="client-found-buttons">
+
+    <button id="newOrderBtn">
+
+  <img
+    src="tomato/newbtn.png"
+    class="btn-icon"
+  >
+
+  <div class="btn-text">
+
+    <div class="btn-title">
+      Новый заказ
+    </div>
+
+    <div class="btn-subtitle">
+      Создать еще один заказ
+    </div>
+
+  </div>
+
+</button>
+
+
+<button id="addonOrderBtn">
+
+  <img
+    src="tomato/reorder.png"
+    class="btn-icon"
+  >
+
+  <div class="btn-text">
+
+    <div class="btn-title">
+      Дозаказать
+    </div>
+
+    <div class="btn-subtitle">
+      Добавить к своему заказу
+    </div>
+
+  </div>
+
+</button>
+
+    </div>
+
+  </div>
+
+</div>
+
+<!-- ВЫБОР ЗАКАЗА ДЛЯ ДОЗАКАЗА -->
+
+<div
+  class="client-modal"
+  id="orderSelectModal"
+>
+
+  <div class="client-modal-box">
+
+    <div class="client-found-title">
+      🍅 Выберите заказ
+    </div>
+
+    <div
+      style="
+        text-align:center;
+        margin:10px 0 18px;
+        color:#7b6d5f;
+      "
+    >
+      Для какого заказа добавить товары?
+    </div>
+
+    <div id="orderSelectList"></div>
+
+    <button
+      id="closeOrderSelectBtn"
+      class="order-label-btn"
+      style="
+        margin-top:18px;
+        background:#b8b1ab;
+      "
+    >
+      Отмена
+    </button>
+
+  </div>
+
+</div>
+
+
+<!-- НАЗВАНИЕ ЗАКАЗА -->
+
+<div
+  class="client-modal"
+  id="orderLabelModal"
+>
+
+  <div class="client-modal-box">
+
+  <span
+    id="closeOrderLabelModal"
+    class="modal-close"
+  >
+    ✕
+  </span>
+
+  <div
+    class="order-label-title"
+    id="orderLabelTitle"
+  >
+    🍅 ЗАКАЗ
+  </div>
+
+    <input
+      type="text"
+      id="orderLabelInput"
+      class="order-label-input"
+      placeholder="Оставить пустым"
+    >
+
+    <div class="order-label-hint">
+
+      Например:
+
+      <br>• для себя
+      <br>• для подруги
+      <br>• для соседки
+      <br>• для коллеги
+      <br>• для Марины/Оли/Лены
+
+    </div>
+
+    <button
+      type="button"
+      id="createLabeledOrderBtn"
+      class="order-label-btn"
+    >
+      Создать заказ
+    </button>
+
+  </div>
+
+</div>
+
+
+<div
+  class="sheet-modal"
+  id="sheetModal"
+>
+
+<div
+  class="sheet-box"
+  id="sheetBox"
+>
+
+  <div class="sheet-header">
+
+    <div>
+
+      <div
+        class="sheet-logo"
+        id="sheetTitle"
+      >
+        КАРТОЧКА ЗАКАЗА
+      </div>
+
+      <div
+        class="sheet-subtitle"
+        id="sheetDate"
+      ></div>
+
+      <div
+  class="sheet-order-label"
+  id="sheetOrderLabel"
+></div>
+
+    </div>
+
+    <div
+      class="sheet-total"
+      id="sheetTotal"
+    >
+      0 ₽
+    </div>
+
+  </div>
+
+  <div class="sheet-client-block">
+
+    <div
+      class="sheet-client"
+      id="sheetClient"
+    ></div>
+
+  </div>
+
+  <div
+    class="sheet-items"
+    id="sheetItems"
+  ></div>
+
+  <div class="sheet-bottom">
+
+    <div>
+      ИТОГО
+    </div>
+
+    <div id="sheetTotalItems">
+      0 п
+    </div>
+
+  </div>
+
+  <div class="sheet-message">
+
+    Заказ сформирован 🌱
+
+    <br><br>
+
+    Пожалуйста,
+    отправьте карточку заказа
+    продавцу для подтверждения
+    и дальнейшей оплаты.
+
+    <br><br>
+
+    <div class="contact-row">
+
+  <span>
+    Контакт: +7 999 121-08-77
+  </span>
+
+  <button id="copyPhoneBtn">
+
+     <img
+      src="./tomato/copy-contact.png"
+      alt="Скопировать номер"
+    >
+  
+  </button>
+
+</div>
+
+  </div>
+
+  <div class="sheet-buttons">
+
+    <img
+  id="saveBtn"
+  src="./tomato/send-card.png"
+  class="sheet-action-btn"
+>
+
+  </div>
+  
+
+</div>
+
+</div>
+
+<!-- POPUP -->
+
+<div
+  class="popup"
+  id="popup"
+>
+
+  <button
+    class="popup-back"
+    id="popupBack"
+  >
+    ←
+  </button>
+
+  <div class="popup-box">
+
+    <img
+      id="popupImage"
+      class="popup-image"
+    />
+
+    <div class="popup-content">
+
+      <div
+        id="popupTitle"
+        class="popup-title"
+      ></div>
+
+      <div
+        id="popupFeatures"
+        class="popup-features"
+      ></div>
+
+      <div
+        id="popupDescription"
+        class="popup-description"
+      ></div>
+
+    </div> <!-- popup-content -->
+</div> <!-- popup-box -->
+</div> <!-- popup -->
+
+</div> <!-- app -->
+
+<div id="infoPopup" class="info-popup">
+
+  <img
+    src="./tomato/info-popup.png"
+    class="info-popup-img"
+    alt="Важно"
+  >
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+
+<script src="script.js"></script>
+
+</body>
+
+</html>
