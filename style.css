@@ -2106,78 +2106,239 @@ canvas {
 @media (max-width: 420px) {
 
   .app {
-  width: min(100%, 480px);
-}
+    padding: 8px;
+    max-width: 500px;
+  }
+
+  .header {
+    padding: 14px;
+    border-radius: 24px;
+  }
 
   .logo {
-    font-size: 23px;
+    font-size: 21px;
+  }
+
+  .logo-tomato,
+  .logo-tomato-wrap {
+    width: 42px;
+    height: 42px;
   }
 
   .product {
+
+    min-height: 114px;
+
     grid-template-columns:
-      44px
-      88px
-      minmax(0, 1fr)
-      80px;
+      40px
+      84px
+      minmax(0,1fr)
+      74px;
 
-    min-height: 122px;
+    column-gap: 8px;
 
-    column-gap: 12px;
+    border-radius: 24px;
   }
 
   .product-number {
-    width: 40px;
-    min-width: 40px;
-    height: 114px;
 
-    margin-left: 8px;
-    margin-right: 8px;
+    width: 38px;
+    min-width: 38px;
 
-    font-size: 19px;
+    height: 106px;
+
+    font-size: 18px;
+
+    margin-left: 6px;
+    margin-right: 6px;
   }
 
   .product-image img {
-    width: 100px;
-    height: 112px;
+
+    width: 94px;
+    height: 106px;
+
+    border-radius: 22px;
   }
 
   .product-title {
 
-    width: 100%;
+    font-size: 14.5px;
 
-    font-size: 15.5px;
-
-    line-height: 1.05;
-
-    text-align: center;
+    line-height: 1.04;
 
     overflow-wrap: anywhere;
-
     word-break: break-word;
+  }
 
+  .badge-hit,
+  .badge-new {
+
+    font-size: 10px;
+
+    margin-top: 6px;
   }
 
   .product-price {
-    font-size: 21px;
+    font-size: 20px;
+  }
+
+  .product-right {
+    gap: 5px;
+  }
+
+  .controls {
+    gap: 4px;
+    padding: 3px;
   }
 
   .controls button {
-    width: 23px;
-    height: 23px;
-    font-size: 18px;
+
+    width: 22px;
+    height: 22px;
+
+    font-size: 17px;
   }
 
   .qty {
-    font-size: 16px;
+
+    min-width: 22px;
+    height: 22px;
+
+    font-size: 14px;
   }
 
   .add-btn {
-    height: 40px;
-    font-size: 12px;
+
+    max-width: 68px;
+
+    height: 38px;
+
+    font-size: 11px;
   }
 
+  .search-box {
+    height: 30px;
+  }
+
+  .search-box input {
+    font-size: 14px;
+  }
+
+  .info-tag {
+    height: 36px;
+  }
+
+  .cart-top button {
+
+    width: 132px;
+    height: 50px;
+
+    font-size: 20px;
+  }
+
+  #cartCount {
+    font-size: 18px;
+  }
+
+  #cartPrice {
+    font-size: 21px;
+  }
+
+  .cart-box,
+  .checkout-box,
+  .popup-box,
+  .sheet-box {
+
+    max-width: 390px;
+
+    border-radius: 24px;
+
+    padding: 18px;
+  }
+
+  .cart-title,
   .checkout-title {
-    font-size: 31px;
+
+    font-size: 28px;
+
+    margin-bottom: 18px;
+  }
+
+  .cart-item {
+
+    font-size: 14px;
+
+    padding: 12px 0;
+  }
+
+  .cart-controls button {
+
+    width: 28px;
+    height: 28px;
+
+    font-size: 16px;
+  }
+
+  #checkoutBtn {
+
+    min-width: 140px;
+
+    height: 56px;
+
+    font-size: 18px;
+  }
+
+  .checkout-box input,
+  #pickupPoint,
+  .pickup-trigger {
+
+    height: 52px;
+
+    font-size: 17px;
+  }
+
+  #createOrderBtn {
+
+    height: 58px;
+
+    font-size: 21px;
+  }
+
+  .popup-image {
+    height: 230px;
+  }
+
+  .popup-title {
+    font-size: 23px;
+  }
+
+  .popup-description {
+    font-size: 15px;
+  }
+
+  .sheet-logo {
+    font-size: 20px;
+  }
+
+  .sheet-client {
+    font-size: 18px;
+  }
+
+  .sheet-total {
+    font-size: 23px;
+  }
+
+  .sheet-bottom {
+    font-size: 21px;
+  }
+
+  #loadingTomato {
+    width: 170px;
+  }
+
+  .loading-text {
+    font-size: 18px;
   }
 
 }
