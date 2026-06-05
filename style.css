@@ -3107,24 +3107,10 @@ canvas {
 
 .badge-hit,
 .badge-new {
-
-  display: inline-block;
-
-  margin-top: 8px;
-
-  padding: 1px 6px 2px 2px;
-
-  border-radius: 8px;
-
-  font-size: 11px;
-
-  font-weight: 700;
-
-  letter-spacing: 0.3px;
-
-  position: relative;
-  left: -6px;
-
+  background: red !important;
+  color: white !important;
+  display: block !important;
+  font-size: 20px !important;
 }
 
 .badge-hit {
@@ -3562,3 +3548,4 @@ canvas {
   }
 
 }
+
