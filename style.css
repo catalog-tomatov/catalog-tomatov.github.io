@@ -81,7 +81,7 @@ body {
 
   will-change: transform;
 
-  contain: paint;
+  
 }
 
 .header::before {
@@ -426,6 +426,7 @@ body {
 }
 
 .cart-card {
+  
   background: linear-gradient(
     180deg,
     rgba(255, 255, 255, 0.95),
@@ -2117,6 +2118,9 @@ canvas {
 /* ПОИСК + БИРКА */
 
 .tools-row {
+
+  position: relative;
+
   width: 100%;
 
   display: flex;
@@ -2124,6 +2128,9 @@ canvas {
   align-items: center;
 
   gap: 6px;
+
+  position: relative;
+  overflow: visible;
 }
 
 .search-box {
@@ -3139,6 +3146,58 @@ canvas {
 
   color: #2e7d32;
 }
+
+
+.quick-filters {
+
+  display: flex;
+
+  gap: 6px;
+
+  margin-top: 8px;
+
+}
+
+.search-hints {
+
+  display: none;
+
+  position: absolute;
+
+  top: calc(100% + 6px);
+
+  left: 0;
+
+  width: 180px;
+
+  background: rgba(255,255,255,.82);
+
+  backdrop-filter: blur(18px);
+
+  border-radius: 12px;
+
+  z-index: 10000;
+
+  overflow: visible;
+}
+
+.search-hint {
+
+  padding: 8px 12px;
+
+  font-size: 12px;
+
+  font-weight: 600;
+
+  color: rgba(0,0,0,.65);
+}
+
+.search-hint:active {
+
+  background: rgba(0,0,0,.04);
+
+}
+
 
 
 @media (max-width: 420px) {
