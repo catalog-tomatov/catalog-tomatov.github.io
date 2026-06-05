@@ -2103,89 +2103,84 @@ canvas {
   z-index: 999999999 !important;
 }
 
-@media (min-width: 400px) {
+@media (max-width: 420px) {
 
   .app {
-    max-width: 500px;
-  }
-
+  width: min(100%, 480px);
 }
 
-@media (max-width: 393px) {
-  .sheet-message {
-  font-size: 14px;
-
+  .logo {
+    font-size: 23px;
   }
-}
 
-@media (max-width: 420px) {
   .product {
     grid-template-columns:
-      40px
-      86px
+      44px
+      88px
       minmax(0, 1fr)
       80px;
 
-    column-gap: 14px;
+    min-height: 122px;
+
+    column-gap: 12px;
+  }
+
+  .product-number {
+    width: 40px;
+    min-width: 40px;
+    height: 114px;
+
+    margin-left: 8px;
+    margin-right: 8px;
+
+    font-size: 19px;
+  }
+
+  .product-image img {
+    width: 100px;
+    height: 112px;
   }
 
   .product-title {
 
-  font-size: 16px;
+    width: 100%;
 
-  line-height: 1.05;
+    font-size: 15.5px;
 
-  display:flex;
+    line-height: 1.05;
 
-  align-items:center;
+    text-align: center;
 
-  justify-content:center;
+    overflow-wrap: anywhere;
 
-  text-align:center;
+    word-break: break-word;
 
-  letter-spacing: 0.4px;
+  }
 
-}
+  .product-price {
+    font-size: 21px;
+  }
 
   .controls button {
     width: 23px;
-
     height: 23px;
-
     font-size: 18px;
-
-    border-radius: 10px;
   }
 
   .qty {
-    width: 24px;
-
     font-size: 16px;
-
-    font-weight: 700;
-
-    letter-spacing: 0.3px;
   }
 
   .add-btn {
     height: 40px;
-
-    font-size: 12.3px;
-
-    border-radius: 14px;
-
-    padding: 0 6px;
-
-    letter-spacing: 0.3px;
+    font-size: 12px;
   }
 
   .checkout-title {
     font-size: 31px;
-    margin-left: 1px;
   }
-  
-}
 
+}
 
 
 /* ПОИСК + БИРКА */
