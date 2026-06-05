@@ -67,12 +67,14 @@ const cleanTitle = product.title;
 
     card.className = "product";
 
-    card.dataset.search = `
+  card.dataset.search = `
 ${product.id}
 #${product.id}
 №${product.id}
 ${product.title}
 ${product.description}
+${isHit ? "hit хит" : ""}
+${isNew ? "new новинка" : ""}
 `.toLowerCase();
 
     card.innerHTML = `
@@ -1390,7 +1392,16 @@ const searchInput = document.getElementById("searchInput");
 const clearSearchBtn = document.getElementById("clearSearch");
 
 searchInput.addEventListener("input", () => {
-  const search = searchInput.value.toLowerCase().trim();
+  let search =
+  searchInput.value.toLowerCase().trim();
+
+if (search === "🔥") {
+  search = "хит";
+}
+
+if (search === "⭐") {
+  search = "новинка";
+}
 
   clearSearchBtn.style.display = search ? "block" : "none";
 
@@ -1668,3 +1679,98 @@ function showOrderSelectModal() {
 
   document.getElementById("orderSelectModal").style.display = "flex";
 }
+
+document.getElementById("hitFilter")
+?.addEventListener("click", () => {
+
+  searchInput.value = "хит";
+
+  searchInput.dispatchEvent(
+    new Event("input")
+  );
+
+});
+
+document.getElementById("newFilter")
+?.addEventListener("click", () => {
+
+  searchInput.value = "новинка";
+
+  searchInput.dispatchEvent(
+    new Event("input")
+  );
+
+});
+
+const hints = document.getElementById("searchHints");
+
+let hintsOpened = false;
+
+/* показать / скрыть по нажатию */
+
+searchInput.addEventListener("click", (e) => {
+
+  e.stopPropagation();
+
+  if (hintsOpened) {
+    hints.style.display = "none";
+    hintsOpened = false;
+  } else {
+    hints.style.display = "block";
+    hintsOpened = true;
+  }
+
+});
+
+/* начал печатать -> скрыть */
+
+searchInput.addEventListener("input", () => {
+
+  hints.style.display = "none";
+  hintsOpened = false;
+
+});
+
+/* клик вне поиска -> скрыть */
+
+document.addEventListener("click", (e) => {
+
+  if (
+    !e.target.closest(".search-box") &&
+    !e.target.closest("#searchHints")
+  ) {
+
+    hints.style.display = "none";
+    hintsOpened = false;
+
+  }
+
+});
+
+document
+  .querySelectorAll(".search-hint")
+  .forEach(item => {
+
+    item.addEventListener("click", () => {
+
+      if (item.dataset.search === "хит") {
+  searchInput.value = "🔥";
+}
+
+else if (item.dataset.search === "новинка") {
+  searchInput.value = "⭐";
+}
+
+else {
+  searchInput.value = item.dataset.search;
+}
+
+      searchInput.dispatchEvent(
+        new Event("input")
+      );
+
+      hints.style.display = "none";
+
+    });
+
+});
