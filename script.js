@@ -892,31 +892,43 @@ document.getElementById("saveBtn").onclick = () => {
     }
   );
 
-  if (
-    navigator.canShare &&
-    navigator.canShare({
-      files: [file]
-    })
-  ) {
+ if (
+  navigator.canShare &&
+  navigator.canShare({
+    files: [file]
+  })
+) {
+
+  try {
 
     await navigator.share({
       files: [file],
-      title: "Карточка заказа"
+      title: "Здравствуйте, Сергей! Направляю заказ по семенам томатов для подтверждения."
     });
 
-  } else {
+    setTimeout(() => {
+  location.reload();
+}, 300);
 
-    const link =
-      document.createElement("a");
+  } catch (err) {
 
-    link.download =
-      "order.png";
+    console.log("Отправка отменена");
 
-    link.href =
-      URL.createObjectURL(blob);
-
-    link.click();
   }
+
+} else {
+
+  const link =
+    document.createElement("a");
+
+  link.download =
+    "order.png";
+
+  link.href =
+    URL.createObjectURL(blob);
+
+  link.click();
+}
 
    buttons.style.display = "flex";
 
@@ -1557,7 +1569,7 @@ infoToggle.addEventListener("click", () => {
 
     closeBtn.style.top = (window.innerHeight - finalHeight) / 2 - 20 + "px";
 
-    fly.style.transition = "all .80s cubic-bezier(.22,1,.36,1)";
+    fly.style.transition = "all .60s cubic-bezier(.22,1,.36,1)";
 
     fly.style.left = (window.innerWidth - finalWidth) / 2 + "px";
 
