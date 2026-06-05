@@ -139,7 +139,7 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ''}
 
     const titleEl = card.querySelector(".product-title");
 
-    let size = window.innerWidth <= 390 ? 15.8 : 17;
+    let size = window.innerWidth <= 390 ? 15.8 : 16;
 
     const len = product.title.length;
 
