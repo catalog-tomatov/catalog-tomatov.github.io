@@ -25,7 +25,7 @@ body {
   
 
 .app {
-  width: min(100%, 480px);
+  width: min(100%, 440px);
 
   margin: 0 auto;
 
@@ -873,7 +873,11 @@ body {
 .product-info {
   min-width: 0;
   height: 100%;
+  width: 100%;
 
+  max-width: 100%;
+
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -885,6 +889,12 @@ body {
 
 
 .product-title {
+
+  width: 100%;
+
+  position: relative;
+
+  max-width: 135px;
 
   display: flex;
 
@@ -903,7 +913,8 @@ body {
   color: var(--color-primary);
 
   letter-spacing: 0.4px;
-
+  
+  left: -6px;
 
 }
 
@@ -3112,6 +3123,7 @@ canvas {
   letter-spacing: 0.3px;
 
   position: relative;
+  left: -8px;
 
 }
 
