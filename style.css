@@ -3116,7 +3116,7 @@ canvas {
 
   border-radius: 8px;
 
-  font-size: 11px;
+  font-size: 14px;
 
   font-weight: 700;
 
@@ -3214,7 +3214,7 @@ canvas {
   .badge-hit,
   .badge-new {
 
-    font-size: 10px;
+    font-size: 14px;
 
     margin-top: 6px;
   }
@@ -3430,7 +3430,7 @@ canvas {
   .badge-hit,
   .badge-new {
 
-    font-size: 9px;
+    font-size: 12px;
   }
 
   .product-price {
@@ -3630,7 +3630,7 @@ canvas {
   .badge-hit,
   .badge-new {
 
-    font-size: 8px;
+    font-size: 12px;
 
     margin-top: 4px;
   }
