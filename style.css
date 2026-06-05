@@ -25,7 +25,7 @@ body {
   
 
 .app {
-  width: min(100%, 440px);
+  width: min(100%, 480px);
 
   margin: 0 auto;
 
@@ -3214,3 +3214,109 @@ canvas {
   color: #2e7d32;
 }
 
+
+@media (max-width: 390px) {
+
+  .app {
+    padding: 6px;
+  }
+
+  .logo {
+    font-size: 21px;
+  }
+
+  #loadingTomato {
+    width: 160px;
+  }
+
+  .loading-text {
+    font-size: 16px;
+  }
+
+  .product {
+    min-height: 114px;
+
+    grid-template-columns:
+      38px
+      82px
+      minmax(0, 1fr)
+      76px;
+  }
+
+  .product-number {
+    width: 38px;
+    min-width: 38px;
+    height: 108px;
+
+    font-size: 18px;
+
+    margin-left: 6px;
+    margin-right: 6px;
+  }
+
+  .product-image img {
+    width: 96px;
+    height: 108px;
+  }
+
+  .product-title {
+    font-size: 15px;
+  }
+
+  .product-price {
+    font-size: 20px;
+  }
+
+  .add-btn {
+    height: 38px;
+    font-size: 11px;
+  }
+
+  .controls button {
+    width: 22px;
+    height: 22px;
+    font-size: 17px;
+  }
+
+  .qty {
+    font-size: 15px;
+  }
+
+  .badge-hit,
+  .badge-new {
+    font-size: 10px;
+  }
+
+  .cart-top button {
+    width: 132px;
+    height: 52px;
+    font-size: 20px;
+  }
+
+  #cartPrice {
+    font-size: 22px;
+  }
+
+  .cart-title,
+  .checkout-title {
+    font-size: 28px;
+  }
+
+  .checkout-box input,
+  #pickupPoint {
+    font-size: 18px;
+  }
+
+  #createOrderBtn {
+    height: 58px;
+    font-size: 22px;
+  }
+
+  .popup-title {
+    font-size: 23px;
+  }
+
+  .popup-description {
+    font-size: 16px;
+  }
+}
