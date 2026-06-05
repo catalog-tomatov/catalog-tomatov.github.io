@@ -874,10 +874,8 @@ body {
   min-width: 0;
   height: 100%;
   width: 100%;
-
+  overflow: visible;
   max-width: 100%;
-
-  overflow: hidden;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -3370,197 +3368,6 @@ canvas {
 
 }
 
-@media (max-width: 392px) {
-
-  .app {
-    padding: 6px;
-  }
-
-  .logo {
-    font-size: 19px;
-  }
-
-  .logo-tomato,
-  .logo-tomato-wrap {
-    width: 38px;
-    height: 38px;
-  }
-
-  .product {
-
-    min-height: 104px;
-
-    grid-template-columns:
-      36px
-      78px
-      minmax(0,1fr)
-      68px;
-  }
-
-  .product-number {
-
-    width: 34px;
-    min-width: 34px;
-
-    height: 96px;
-
-    font-size: 16px;
-
-    margin-left: 5px;
-    margin-right: 5px;
-  }
-
-  .product-image img {
-
-    width: 88px;
-    height: 98px;
-
-    border-radius: 20px;
-  }
-
-  .product-title {
-
-    font-size: 13.5px;
-
-    line-height: 1.02;
-  }
-
-  .badge-hit,
-  .badge-new {
-
-    font-size: 9px;
-  }
-
-  .product-price {
-    font-size: 18px;
-  }
-
-  .controls button {
-
-    width: 20px;
-    height: 20px;
-
-    font-size: 15px;
-  }
-
-  .qty {
-
-    min-width: 20px;
-    height: 20px;
-
-    font-size: 13px;
-  }
-
-  .add-btn {
-
-    height: 34px;
-
-    font-size: 10px;
-  }
-
-  .search-box {
-    height: 28px;
-  }
-
-  .search-box input {
-    font-size: 13px;
-  }
-
-  .info-tag {
-    height: 32px;
-  }
-
-  .cart-top button {
-
-    width: 118px;
-    height: 46px;
-
-    font-size: 18px;
-  }
-
-  #cartCount {
-    font-size: 16px;
-  }
-
-  #cartPrice {
-    font-size: 19px;
-  }
-
-  .cart-box,
-  .checkout-box,
-  .popup-box,
-  .sheet-box {
-
-    border-radius: 20px;
-  }
-
-  .cart-title,
-  .checkout-title {
-
-    font-size: 25px;
-  }
-
-  .cart-item {
-
-    font-size: 14px;
-  }
-
-  .cart-controls button {
-
-    width: 26px;
-    height: 26px;
-
-    font-size: 15px;
-  }
-
-  #checkoutBtn {
-
-    height: 52px;
-
-    font-size: 17px;
-  }
-
-  .checkout-box input,
-  #pickupPoint,
-  .pickup-trigger {
-
-    height: 48px;
-
-    font-size: 16px;
-  }
-
-  #createOrderBtn {
-
-    height: 54px;
-
-    font-size: 19px;
-  }
-
-  .sheet-logo {
-    font-size: 18px;
-  }
-
-  .sheet-client {
-    font-size: 16px;
-  }
-
-  .sheet-total {
-    font-size: 21px;
-  }
-
-  .sheet-bottom {
-    font-size: 19px;
-  }
-
-  #loadingTomato {
-    width: 150px;
-  }
-
-  .loading-text {
-    font-size: 16px;
-  }
-
-}
 
 @media (max-width: 392px) {
 
@@ -3615,6 +3422,8 @@ canvas {
     font-size: 13px;
 
     line-height: 1.02;
+
+    left: -6px;
   }
 
   .badge-hit,
