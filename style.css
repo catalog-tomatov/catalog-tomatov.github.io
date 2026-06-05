@@ -892,6 +892,8 @@ body {
 
   width: 100%;
 
+  width: fit-content;
+
   position: relative;
 
   max-width: 135px;
@@ -914,7 +916,7 @@ body {
 
   letter-spacing: 0.4px;
   
-  left: -6px;
+  left: -5px;
 
 }
 
@@ -3123,7 +3125,7 @@ canvas {
   letter-spacing: 0.3px;
 
   position: relative;
-  left: -8px;
+  left: -6px;
 
 }
 
@@ -3610,7 +3612,7 @@ canvas {
 
   .product-title {
 
-    font-size: 13.5px;
+    font-size: 13px;
 
     line-height: 1.02;
   }
