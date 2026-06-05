@@ -734,7 +734,7 @@ body {
 
   justify-content: center;
 
-  padding-bottom: 6px;
+  padding-bottom: 4px;
 
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
 }
@@ -987,7 +987,7 @@ body {
 
   backdrop-filter: blur(22px) saturate(80%);
 
-  box-shadow:
+  box-shadow:4px
     inset 0 1px 0 rgba(255, 255, 255, 0.8),
     inset 0 -1px 0 rgba(255, 255, 255, 0.15),
     0 3px 8px rgba(0, 0, 0, 0.04);
@@ -3564,3 +3564,180 @@ canvas {
 
 }
 
+@media (max-width: 380px) {
+
+  .popup-description {
+  
+  font-size: 12px;
+
+}
+
+  .app {
+    padding: 4px;
+  }
+
+  .logo {
+    font-size: 17px;
+  }
+
+  .logo-tomato,
+  .logo-tomato-wrap {
+    width: 34px;
+    height: 34px;
+  }
+
+  .product {
+
+    min-height: 92px;
+
+    grid-template-columns:
+      32px
+      70px
+      minmax(0,1fr)
+      62px;
+
+    column-gap: 5px;
+  }
+
+  .product-number {
+
+    width: 30px;
+    min-width: 30px;
+
+    height: 84px;
+
+    font-size: 14px;
+
+    margin-left: 3px;
+    margin-right: 3px;
+  }
+
+  .product-image img {
+
+    width: 78px;
+    height: 88px;
+
+    border-radius: 18px;
+  }
+
+  .product-title {
+
+    font-size: 11px;
+
+    line-height: 1.02;
+  }
+
+  .badge-hit,
+  .badge-new {
+
+    font-size: 8px;
+
+    margin-top: 4px;
+  }
+
+  .product-price {
+    font-size: 16px;
+  }
+
+  .controls {
+    gap: 3px;
+  }
+
+  .controls button {
+
+    width: 18px;
+    height: 18px;
+
+    font-size: 13px;
+  }
+
+  .qty {
+
+    min-width: 18px;
+    height: 18px;
+
+    font-size: 12px;
+  }
+
+  .add-btn {
+
+    height: 30px;
+
+    font-size: 9px;
+  }
+
+  .search-box {
+    height: 26px;
+  }
+
+  .search-box input {
+    font-size: 12px;
+  }
+
+  .cart-top button {
+
+    width: 105px;
+    height: 42px;
+
+    font-size: 16px;
+  }
+
+  #cartCount {
+    font-size: 14px;
+  }
+
+  #cartPrice {
+    font-size: 17px;
+  }
+
+  .cart-title,
+  .checkout-title {
+    font-size: 22px;
+  }
+
+  .cart-item {
+    font-size: 13px;
+  }
+
+  #checkoutBtn {
+    height: 48px;
+    font-size: 16px;
+  }
+
+  .checkout-box input,
+  #pickupPoint,
+  .pickup-trigger {
+    height: 44px;
+    font-size: 15px;
+  }
+
+  #createOrderBtn {
+    height: 50px;
+    font-size: 17px;
+  }
+
+  .sheet-logo {
+    font-size: 16px;
+  }
+
+  .sheet-client {
+    font-size: 15px;
+  }
+
+  .sheet-total {
+    font-size: 18px;
+  }
+
+  .sheet-bottom {
+    font-size: 17px;
+  }
+
+  #loadingTomato {
+    width: 130px;
+  }
+
+  .loading-text {
+    font-size: 14px;
+  }
+
+}
