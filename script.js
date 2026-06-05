@@ -53,17 +53,11 @@ function renderProducts() {
 
   products.forEach((product) => {
 
-const isHit =
-  product.title.toLowerCase().includes("[hit]");
+const isHit = product.isHit;
 
-const isNew =
-  product.title.toLowerCase().includes("[new]");
+const isNew = product.isNew;
 
-const cleanTitle =
-  product.title
-    .replace(/\[hit\]/gi, "")
-    .replace(/\[new\]/gi, "")
-    .trim();
+const cleanTitle = product.title;
 
     const card = document.createElement("div");
 
@@ -143,9 +137,10 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ''}
 
     const len = product.title.length;
 
-    if (len > 22) size -= 0.5;
-    if (len > 26) size -= 0.8;
-    if (len > 32) size -= 1;
+    if (len > 15) size -= 0.3;
+    if (len > 20) size -= 0.5;
+    if (len > 24) size -= 0.8;
+    if (len > 36) size -= 1;
 
     titleEl.style.fontSize = size + "px";
 
@@ -276,11 +271,8 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ''}
 
       document.getElementById("popupImage").src = product.image;
 
-      document.getElementById("popupTitle").innerHTML =
-  product.title
-    .replace(/\[hit\]/gi, "")
-    .replace(/\[new\]/gi, "")
-    .trim();
+     document.getElementById("popupTitle").innerHTML =
+  product.title;
 
       document.getElementById("popupDescription").innerHTML =
         product.description;
