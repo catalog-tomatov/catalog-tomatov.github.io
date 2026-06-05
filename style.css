@@ -911,9 +911,9 @@ body {
 /* RIGHT */
 
 .product-right {
-  padding: 8px 1px;
+  padding: 8px 4px;
 
-  transform: translateX(-6px);
+  transform: translateX(-8px);
 
   display: flex;
 
@@ -3215,8 +3215,8 @@ canvas {
   }
 
   .controls {
-    gap: 4px;
-    padding: 3px;
+    gap: 5px;
+  
   }
 
   .controls button {
@@ -3237,11 +3237,8 @@ canvas {
 
   .add-btn {
 
-    max-width: 68px;
-
     height: 38px;
 
-    font-size: 11px;
   }
 
   .search-box {
