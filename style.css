@@ -2111,6 +2111,15 @@ canvas {
   z-index: 999999999 !important;
 }
 
+@media (max-width: 400px) {
+
+  .app {
+    transform: scale(0.96);
+    transform-origin: top center;
+  }
+
+}
+
 @media (max-width: 393px) {
   .sheet-message {
   font-size: 14px;
