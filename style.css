@@ -21,16 +21,8 @@ body {
 
   text-rendering: optimizeLegibility;
   
-  -webkit-text-size-adjust: 100%;
-  text-size-adjust: 100%;
 }
-  html,
-  body {
-  margin: 0;
-  padding: 0;
-  overflow-x: hidden;
-}
-
+  
 
 .app {
   width: min(100%, 440px);
@@ -884,11 +876,11 @@ body {
 
   display: flex;
   flex-direction: column;
-
   align-items: center;
   justify-content: center;
-
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 
