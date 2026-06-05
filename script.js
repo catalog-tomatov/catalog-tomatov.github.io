@@ -53,9 +53,13 @@ function renderProducts() {
 
   products.forEach((product) => {
 
-const isHit = product.isHit;
+const isHit =
+  product.isHit ||
+  product.title.includes("[hit]");
 
-const isNew = product.isNew;
+const isNew =
+  product.isNew ||
+  product.title.includes("[new]");
 
 const cleanTitle = product.title;
 
