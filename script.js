@@ -1569,7 +1569,7 @@ infoToggle.addEventListener("click", () => {
 
     closeBtn.style.top = (window.innerHeight - finalHeight) / 2 - 20 + "px";
 
-    fly.style.transition = "all .60s cubic-bezier(.22,1,.36,1)";
+    fly.style.transition = "all .55s cubic-bezier(.22,1,.36,1)";
 
     fly.style.left = (window.innerWidth - finalWidth) / 2 + "px";
 
