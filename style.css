@@ -372,7 +372,7 @@ body {
 }
 
 .loading-text {
-  margin-top: 56px;
+  margin-top: 100px;
 
   font-size: 20px;
 
@@ -712,7 +712,7 @@ body {
 
   border: none;
 
-  background: rgba(40, 40, 40, 0.28);
+  background: rgba(40, 40, 40, 0.16);
 
   backdrop-filter: blur(20px) saturate(180%);
 
@@ -734,9 +734,7 @@ body {
 
   justify-content: center;
 
-  line-height: 0.9;
-
-  padding-bottom: 8px;
+  padding-bottom: 6px;
 
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
 }
