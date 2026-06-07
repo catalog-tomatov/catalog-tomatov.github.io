@@ -267,6 +267,7 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ''}
 
       setTimeout(() => {
         popup.style.display = "flex";
+        lockBody();
       }, 140);
 
       popupBox.classList.add("modal-open-soft");
@@ -440,6 +441,8 @@ function renderCart() {
 document.getElementById("openCartBtn").onclick = () => {
   vibrate(15);
 
+  lockBody();
+
   setTimeout(() => {
     cartModal.style.display = "flex";
   }, 110);
@@ -460,9 +463,12 @@ document.getElementById("checkoutBtn").onclick = () => {
   setTimeout(() => {
     cartModal.style.display = "none";
 
+    unlockBody();
+
     cartBox.classList.remove("modal-hide");
 
     checkoutModal.style.display = "flex";
+    lockBody();
 
     checkoutBox.classList.add("modal-open-medium");
 
@@ -565,8 +571,10 @@ async function submitOrder() {
 
       console.log("OPEN SHEET MODAL", new Date().toLocaleTimeString());
       document.getElementById("clientModal").style.display = "none";
+      unlockBody();
 
       document.getElementById("orderSelectModal").style.display = "none";
+      unlockBody();
 
       const orderNumber = foundClient ? foundClient.orderCount + 1 : 1;
 
@@ -635,8 +643,11 @@ async function submitOrder() {
       navigator.vibrate?.([80, 50, 80]);
       setTimeout(() => {
         checkoutModal.style.display = "none";
+        unlockBody();
 
         sheetModal.style.display = "flex";
+
+        lockBody();
 
         cart = [];
 
@@ -828,6 +839,7 @@ document.getElementById("createOrderBtn").onclick = async () => {
 
 `;
       document.getElementById("clientModal").style.display = "flex";
+      lockBody();
       btn.classList.remove("loading-btn");
 
       btn.innerHTML = "Создать заказ";
@@ -1010,6 +1022,7 @@ popup.addEventListener("click", (e) => {
     requestAnimationFrame(() => {
       setTimeout(() => {
         popup.style.display = "none";
+        unlockBody();
 
         popupBox.classList.remove("modal-hide");
       }, 200);
@@ -1057,6 +1070,14 @@ let orderLabel = "";
 let orderSending = false;
 
 let cardDownloaded = false;
+
+function lockBody() {
+  document.body.style.overflow = "hidden";
+}
+
+function unlockBody() {
+  document.body.style.overflow = "";
+}
 
 /* REMOVE ERROR */
 
@@ -1587,6 +1608,7 @@ newOrderBtn.onclick = () => {
   document.getElementById("clientModal").style.display = "none";
 
   document.getElementById("orderLabelModal").style.display = "flex";
+  lockBody();
 
   const nextOrderNumber = (foundClient?.orderCount || 0) + 1;
 
@@ -1596,6 +1618,7 @@ newOrderBtn.onclick = () => {
 
 document.getElementById("closeOrderLabelModal").onclick = () => {
   document.getElementById("orderLabelModal").style.display = "none";
+  
 
   document.getElementById("clientModal").style.display = "flex";
 };
@@ -1678,6 +1701,7 @@ function showOrderSelectModal() {
   });
 
   document.getElementById("orderSelectModal").style.display = "flex";
+  lockBody();
 }
 
 document.getElementById("hitFilter")
@@ -1774,3 +1798,4 @@ else {
     });
 
 });
+
