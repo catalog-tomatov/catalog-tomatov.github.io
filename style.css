@@ -658,6 +658,8 @@ body {
   will-change: transform, opacity;
 
   transform: translateZ(0);
+  
+  
 }
 
 .cart-box *,
@@ -1581,6 +1583,9 @@ body {
   border: 1px solid #ddd;
 
   font-size: 20px;
+
+  font-weight: 500;
+
   letter-spacing: 1px;
 }
 
@@ -1771,6 +1776,7 @@ body {
   background: rgba(24, 185, 120, 0.12);
 }
 
+
 /* POPUP */
 
 .popup-box {
@@ -1778,7 +1784,7 @@ body {
 
   max-width: 420px;
 
-  max-height: calc(100dvh - 110px);
+  max-height: calc(100dvh - 130px);
 
   overflow-y: auto;
 
@@ -3353,7 +3359,6 @@ canvas {
     font-size: 18px;
   }
 
-  .checkout-box input,
   #pickupPoint,
   .pickup-trigger {
     height: 52px;
@@ -3529,7 +3534,6 @@ canvas {
     font-size: 17px;
   }
 
-  .checkout-box input,
   #pickupPoint,
   .pickup-trigger {
     height: 48px;
@@ -3696,7 +3700,7 @@ canvas {
     font-size: 16px;
   }
 
-  .checkout-box input,
+  
   #pickupPoint,
   .pickup-trigger {
     height: 44px;
