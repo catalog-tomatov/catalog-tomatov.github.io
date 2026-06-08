@@ -532,6 +532,13 @@ async function submitOrder() {
     return sum + item.qty;
   }, 0);
 
+  console.log(
+  "DEBUG",
+  orderMode,
+  selectedOrderColumn,
+  orderLabel
+);
+
   fetch(
     "https://script.google.com/macros/s/AKfycbwAIYzIGkeGriT_B4Z1M58oK1xqexMiyDpE4eGnQTTQt-CeJwbeh_vkqXMXipE1END2/exec",
     {
@@ -861,6 +868,7 @@ document.getElementById("createOrderBtn").onclick = async () => {
 /* SAVE PNG */
 
 document.getElementById("saveBtn").onclick = () => {
+  
   const sheet = document.getElementById("sheetBox");
 
   const sheetItems = document.getElementById("sheetItems");
@@ -905,6 +913,7 @@ document.getElementById("saveBtn").onclick = () => {
           files: [file],
         })
       ) {
+
         try {
           await navigator.share({
             files: [file],
@@ -916,8 +925,10 @@ document.getElementById("saveBtn").onclick = () => {
             location.reload();
           }, 300);
         } catch (err) {
-          console.log("Отправка отменена");
-        }
+  console.error(err);
+
+  showToast("Не удалось открыть меню отправки");
+}
       } else {
         const link = document.createElement("a");
 
@@ -998,6 +1009,8 @@ cartModal.addEventListener("click", (e) => {
     setTimeout(() => {
       cartModal.style.display = "none";
 
+      unlockBody();
+
       cartBox.classList.remove("modal-hide");
     }, 200);
   }
@@ -1009,6 +1022,8 @@ checkoutModal.addEventListener("click", (e) => {
 
     setTimeout(() => {
       checkoutModal.style.display = "none";
+
+      unlockBody();
 
       checkoutBox.classList.remove("modal-hide");
     }, 200);
@@ -1144,6 +1159,7 @@ document.getElementById("popupBack").onclick = () => {
 
   setTimeout(() => {
     popup.style.display = "none";
+    unlockBody();
 
     popupBox.classList.remove("modal-hide");
 
@@ -1799,3 +1815,50 @@ else {
 
 });
 
+document.getElementById("cartBackBtn").onclick = () => {
+
+  cartBox.classList.add("modal-hide");
+
+  setTimeout(() => {
+
+    cartModal.style.display = "none";
+
+    unlockBody();
+
+    cartBox.classList.remove("modal-hide");
+
+  }, 200);
+
+};
+
+document.getElementById("checkoutBackBtn").onclick = () => {
+
+  checkoutBox.classList.add("modal-hide");
+
+  setTimeout(() => {
+
+    checkoutModal.style.display = "none";
+
+    unlockBody();
+
+    checkoutBox.classList.remove("modal-hide");
+
+  }, 200);
+
+};
+
+
+
+
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js")
+      .then(() => {
+        console.log("PWA READY");
+      })
+      .catch((err) => {
+        console.log("SW ERROR", err);
+      });
+  });
+}
