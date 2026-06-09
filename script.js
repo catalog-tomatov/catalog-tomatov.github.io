@@ -654,6 +654,10 @@ async function submitOrder() {
 
         sheetModal.style.display = "flex";
 
+         setTimeout(() => {
+         generateOrderPng();
+      }, 300);
+
         lockBody();
 
         cart = [];
@@ -867,147 +871,38 @@ document.getElementById("createOrderBtn").onclick = async () => {
 
 /* SAVE PNG */
 
-document.getElementById("saveBtn").onclick = () => {
-  
-  const sheet = document.getElementById("sheetBox");
+document.getElementById("saveBtn").onclick = async () => {
+  if (!generatedFile) {
+    if (isGeneratingPng) {
+      showToast("⏳ Карточка готовится...");
+    } else {
+      showToast("⏳ Нажмите ещё раз...");
+      generateOrderPng();
+    }
+    return;
+  }
 
-  const sheetItems = document.getElementById("sheetItems");
+  vibrate(15);
 
-  sheetItems.style.maxHeight = "none";
-
-  sheetItems.style.overflow = "visible";
-
-  const buttons = document.querySelector(".sheet-buttons");
-
-  buttons.style.display = "none";
-
-  /* REMOVE SCROLL */
-
-  sheet.style.maxHeight = "none";
-
-  sheet.style.overflow = "visible";
-
-  const copyBtn = document.getElementById("copyPhoneBtn");
-
-if (copyBtn) {
-  copyBtn.style.display = "none";
-}
-
-  html2canvas(sheet, {
-    scale: 2,
-
-    useCORS: true,
-
-    backgroundColor: null,
-
-    scrollY: 0,
-
-    scrollX: 0,
-
-    windowWidth: sheet.scrollWidth,
-
-    windowHeight: sheet.scrollHeight,
-  }).then((canvas) => {
-    canvas.toBlob(async (blob) => {
-      const file = new File([blob], "order.png", {
-        type: "image/png",
-      });
-
-      if (
-        navigator.canShare &&
-        navigator.canShare({
-          files: [file],
-        })
-      ) {
-
-        try {
-          await navigator.share({
-            files: [file],
-            title:
-              "Здравствуйте, Сергей! Направляю заказ по семенам томатов для подтверждения.",
-          });
-
-        
-        } catch (err) {
-  console.error(err);
-
-  showToast("Не удалось открыть меню отправки");
-}
-      } else {
-        const link = document.createElement("a");
-
-        link.download = "order.png";
-
-        link.href = URL.createObjectURL(blob);
-
-        link.click();
-      }
-
-      buttons.style.display = "flex";
-
-      if (copyBtn) {
-      copyBtn.style.display = "";
-}
-    });
-
-    sheetItems.style.maxHeight = "220px";
-
-    sheetItems.style.overflowY = "auto";
-
-    sheetItems.style.overflow = "";
-
-    /* RETURN SCROLL */
-
-    sheet.style.maxHeight = "92vh";
-
-    sheet.style.overflowY = "auto";
-
-    buttons.style.display = "flex";
-
-    sheetItems.style.maxHeight = "220px";
-
-    sheetItems.style.overflowY = "auto";
-
-    sheetItems.style.overflow = "";
-
-    /* RESET */
-
-    createOrderBtn.classList.remove("loading-btn");
-
-    createOrderBtn.innerHTML = "Создать заказ";
-
-    // sheetModal.style.display = "none";
-
-    document.body.style.overflow = "";
-    document.getElementById("clientName").value = "";
-
-    document.getElementById("clientPhone").value = "+7";
-
-    document.getElementById("pickupPoint").selectedIndex = 0;
-
-    pickupTrigger.textContent = "Выберите точку выдачи";
-
-    pickupPoint.value = "";
-
-    document.getElementById("pvzAddress").value = "";
-
-    document.getElementById("pvzAddress").style.display = "none";
-
-    foundClient = null;
-    clientOrders = [];
-    selectedOrderColumn = null;
-    orderLabel = "";
-    orderMode = "normal";
-    orderSending = false;
-  });
-
-  document.getElementById("clientName").style.display = "block";
-
-  document.getElementById("clientPhone").style.display = "block";
-
-  document.getElementById("pickupTrigger").style.display = "flex";
+  // Пробуем скачать файл (надёжный способ для localhost)
+  try {
+    const url = URL.createObjectURL(generatedFile);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "order.png";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    
+    showToast("📥 Карточка сохранена. Отправьте в Telegram/WhatsApp");
+  } catch (err) {
+    console.error("Ошибка при сохранении:", err);
+    showToast("⚠️ Не удалось сохранить");
+  }
 };
 
+    
 /* CLOSE MODALS */
 
 cartModal.addEventListener("click", (e) => {
@@ -1094,13 +989,70 @@ let orderSending = false;
 
 let cardDownloaded = false;
 
-function lockBody() {
-  document.body.style.overflow = "hidden";
+let generatedFile = null;
+
+let isGeneratingPng = false;
+
+async function generateOrderPng() {
+  if (isGeneratingPng) return;
+  isGeneratingPng = true;
+  
+  const sheet = document.getElementById("sheetBox");
+  const copyBtn = document.getElementById("copyPhoneBtn");
+  const buttons = document.querySelector(".sheet-buttons");
+  const saveBtn = document.getElementById("saveBtn");
+  
+  if (copyBtn) copyBtn.style.display = "none";
+  if (buttons) buttons.style.display = "none";
+  
+  // Показываем что идёт генерация
+  if (saveBtn) {
+    saveBtn.style.opacity = "0.6";
+    saveBtn.style.pointerEvents = "none";
+  }
+
+  try {
+    const canvas = await html2canvas(sheet, {
+      scale: 2,
+      useCORS: true,
+      allowTaint: false,
+      foreignObjectRendering: true,
+      logging: false,
+      backgroundColor: "#fffdfa",
+      imageTimeout: 0
+    });
+
+    const blob = await new Promise(resolve => {
+      canvas.toBlob(resolve, "image/png", 1.0);
+    });
+
+    generatedFile = new File(
+      [blob],
+      "order.png",
+      { type: "image/png" }
+    );
+
+    // Файл готов - включаем кнопку
+    if (saveBtn) {
+      saveBtn.style.opacity = "1";
+      saveBtn.style.pointerEvents = "auto";
+    }
+    
+  } catch (err) {
+    console.error("Ошибка генерации PNG:", err);
+    showToast("⚠️ Не удалось создать карточку");
+    
+    if (saveBtn) {
+      saveBtn.style.opacity = "1";
+      saveBtn.style.pointerEvents = "auto";
+    }
+  } finally {
+    if (buttons) buttons.style.display = "flex";
+    if (copyBtn) copyBtn.style.display = "";
+    isGeneratingPng = false;
+  }
 }
 
-function unlockBody() {
-  document.body.style.overflow = "";
-}
 
 /* REMOVE ERROR */
 
@@ -1834,22 +1786,6 @@ document.getElementById("cartBackBtn").onclick = () => {
     unlockBody();
 
     cartBox.classList.remove("modal-hide");
-
-  }, 200);
-
-};
-
-document.getElementById("checkoutBackBtn").onclick = () => {
-
-  checkoutBox.classList.add("modal-hide");
-
-  setTimeout(() => {
-
-    checkoutModal.style.display = "none";
-
-    unlockBody();
-
-    checkoutBox.classList.remove("modal-hide");
 
   }, 200);
 
