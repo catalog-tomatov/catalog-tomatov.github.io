@@ -873,35 +873,40 @@ document.getElementById("createOrderBtn").onclick = async () => {
 
 document.getElementById("saveBtn").onclick = async () => {
   if (!generatedFile) {
-    if (isGeneratingPng) {
-      showToast("⏳ Карточка готовится...");
-    } else {
-      showToast("⏳ Нажмите ещё раз...");
-      generateOrderPng();
-    }
+    showToast("⏳ Карточка ещё готовится...");
     return;
   }
 
   vibrate(15);
 
-  // Пробуем скачать файл (надёжный способ для localhost)
-  try {
-    const url = URL.createObjectURL(generatedFile);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "order.png";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    
-    showToast("📥 Карточка сохранена. Отправьте в Telegram/WhatsApp");
-  } catch (err) {
-    console.error("Ошибка при сохранении:", err);
-    showToast("⚠️ Не удалось сохранить");
+  // Пробуем Web Share API (только на мобильных с HTTPS)
+  if (navigator.share && navigator.canShare && window.isSecureContext) {
+    try {
+      await navigator.share({
+        files: [generatedFile],
+        title: 'Карточка заказа',
+        text: 'Мой заказ томатов'
+      });
+      showToast("✅ Карточка отправлена!");
+      return;
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      // Если не получилось, скачиваем
+    }
   }
-};
 
+  // Фолбэк: скачивание
+  const url = URL.createObjectURL(generatedFile);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "order.png";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+  
+  showToast("📥 Карточка сохранена");
+};
     
 /* CLOSE MODALS */
 
