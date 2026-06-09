@@ -10,6 +10,14 @@ let tomatoLevel = 0;
 
 let tomatoClicks = 0;
 
+function lockBody() {
+  document.body.style.overflow = "hidden";
+}
+
+function unlockBody() {
+  document.body.style.overflow = "";
+}
+
 /* ELEMENTS */
 
 const catalog = document.getElementById("catalog");
@@ -653,10 +661,7 @@ async function submitOrder() {
         unlockBody();
 
         sheetModal.style.display = "flex";
-
-         setTimeout(() => {
-         generateOrderPng();
-      }, 300);
+        document.getElementById("saveBtn").style.display = "none";
 
         lockBody();
 
@@ -697,6 +702,57 @@ async function submitOrder() {
             requestAnimationFrame(frame);
           }
         })();
+        setTimeout(() => {
+
+
+document.querySelectorAll("canvas").forEach(c => c.remove());
+  const sheet = document.getElementById("sheetBox");
+const sheetItems = document.getElementById("sheetItems");
+
+// раскрываем карточку
+sheetItems.style.maxHeight = "none";
+sheetItems.style.overflow = "visible";
+
+sheet.style.maxHeight = "none";
+sheet.style.overflow = "visible";
+
+html2canvas(sheet, {
+  scale: 3,
+  useCORS: false,
+  backgroundColor: "none",
+
+  scrollY: 0,
+  scrollX: 0,
+
+  windowWidth: sheet.scrollWidth,
+  windowHeight: sheet.scrollHeight,
+
+}).then((canvas) => {
+
+  canvas.toBlob((blob) => {
+
+    generatedFile = new File(
+  [blob],
+  "order.png",
+  {
+    type: "image/png"
+  }
+);
+
+    // возвращаем скролл обратно
+    sheetItems.style.maxHeight = "220px";
+    sheetItems.style.overflowY = "auto";
+
+    sheet.style.maxHeight = "92vh";
+    sheet.style.overflowY = "auto";
+
+    document.getElementById("saveBtn").style.display = "flex";
+
+  }, "image/png");
+
+});
+
+}, 1800);
       }, 900);
     })
 
@@ -714,6 +770,8 @@ async function submitOrder() {
       showToast("⚠️ Нет соединения с интернетом");
     });
 }
+
+
 
 /* CREATE ORDER */
 
@@ -869,45 +927,38 @@ document.getElementById("createOrderBtn").onclick = async () => {
   return;
 };
 
-/* SAVE PNG */
+
+/* SAVE */
 
 document.getElementById("saveBtn").onclick = async () => {
+
   if (!generatedFile) {
-    showToast("⏳ Карточка ещё готовится...");
+    showToast("⏳ Карточка ещё создаётся");
     return;
   }
 
-  vibrate(15);
+  try {
 
-  // Пробуем Web Share API (только на мобильных с HTTPS)
-  if (navigator.share && navigator.canShare && window.isSecureContext) {
-    try {
-      await navigator.share({
-        files: [generatedFile],
-        title: 'Карточка заказа',
-        text: 'Мой заказ томатов'
-      });
-      showToast("✅ Карточка отправлена!");
-      return;
-    } catch (err) {
-      if (err.name === 'AbortError') return;
-      // Если не получилось, скачиваем
-    }
+    await navigator.share({
+      files: [generatedFile],
+      title:
+        "Здравствуйте, Сергей! Направляю заказ по семенам томатов для подтверждения.",
+    });
+
+    setTimeout(() => {
+      location.reload();
+    }, 300);
+
+  } catch (err) {
+
+    console.log("Отправка отменена", err);
+
   }
 
-  // Фолбэк: скачивание
-  const url = URL.createObjectURL(generatedFile);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = "order.png";
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-  
-  showToast("📥 Карточка сохранена");
 };
-    
+
+ 
+
 /* CLOSE MODALS */
 
 cartModal.addEventListener("click", (e) => {
@@ -995,68 +1046,6 @@ let orderSending = false;
 let cardDownloaded = false;
 
 let generatedFile = null;
-
-let isGeneratingPng = false;
-
-async function generateOrderPng() {
-  if (isGeneratingPng) return;
-  isGeneratingPng = true;
-  
-  const sheet = document.getElementById("sheetBox");
-  const copyBtn = document.getElementById("copyPhoneBtn");
-  const buttons = document.querySelector(".sheet-buttons");
-  const saveBtn = document.getElementById("saveBtn");
-  
-  if (copyBtn) copyBtn.style.display = "none";
-  if (buttons) buttons.style.display = "none";
-  
-  // Показываем что идёт генерация
-  if (saveBtn) {
-    saveBtn.style.opacity = "0.6";
-    saveBtn.style.pointerEvents = "none";
-  }
-
-  try {
-    const canvas = await html2canvas(sheet, {
-      scale: 2,
-      useCORS: true,
-      allowTaint: false,
-      foreignObjectRendering: true,
-      logging: false,
-      backgroundColor: "#fffdfa",
-      imageTimeout: 0
-    });
-
-    const blob = await new Promise(resolve => {
-      canvas.toBlob(resolve, "image/png", 1.0);
-    });
-
-    generatedFile = new File(
-      [blob],
-      "order.png",
-      { type: "image/png" }
-    );
-
-    // Файл готов - включаем кнопку
-    if (saveBtn) {
-      saveBtn.style.opacity = "1";
-      saveBtn.style.pointerEvents = "auto";
-    }
-    
-  } catch (err) {
-    console.error("Ошибка генерации PNG:", err);
-    showToast("⚠️ Не удалось создать карточку");
-    
-    if (saveBtn) {
-      saveBtn.style.opacity = "1";
-      saveBtn.style.pointerEvents = "auto";
-    }
-  } finally {
-    if (buttons) buttons.style.display = "flex";
-    if (copyBtn) copyBtn.style.display = "";
-    isGeneratingPng = false;
-  }
-}
 
 
 /* REMOVE ERROR */
