@@ -1784,7 +1784,7 @@ body {
 
   max-width: 420px;
 
-  max-height: calc(100dvh - 130px);
+  max-height: calc(100dvh - 100px);
 
   overflow-y: auto;
 
