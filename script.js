@@ -887,6 +887,12 @@ document.getElementById("saveBtn").onclick = () => {
 
   sheet.style.overflow = "visible";
 
+  const copyBtn = document.getElementById("copyPhoneBtn");
+
+if (copyBtn) {
+  copyBtn.style.display = "none";
+}
+
   html2canvas(sheet, {
     scale: 2,
 
@@ -921,9 +927,7 @@ document.getElementById("saveBtn").onclick = () => {
               "Здравствуйте, Сергей! Направляю заказ по семенам томатов для подтверждения.",
           });
 
-          setTimeout(() => {
-            location.reload();
-          }, 300);
+        
         } catch (err) {
   console.error(err);
 
@@ -940,6 +944,10 @@ document.getElementById("saveBtn").onclick = () => {
       }
 
       buttons.style.display = "flex";
+
+      if (copyBtn) {
+      copyBtn.style.display = "";
+}
     });
 
     sheetItems.style.maxHeight = "220px";
@@ -1847,18 +1855,3 @@ document.getElementById("checkoutBackBtn").onclick = () => {
 
 };
 
-
-
-
-
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw.js")
-      .then(() => {
-        console.log("PWA READY");
-      })
-      .catch((err) => {
-        console.log("SW ERROR", err);
-      });
-  });
-}
