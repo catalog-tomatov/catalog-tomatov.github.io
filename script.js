@@ -661,6 +661,7 @@ async function submitOrder() {
         unlockBody();
 
         sheetModal.style.display = "flex";
+        catalog.innerHTML = "";
         document.getElementById("saveBtn").style.display = "none";
 
         lockBody();
@@ -706,45 +707,60 @@ async function submitOrder() {
 
 
 document.querySelectorAll("canvas").forEach(c => c.remove());
-  const sheet = document.getElementById("sheetBox");
-const sheetItems = document.getElementById("sheetItems");
+ const original = document.getElementById("sheetBox");
 
-// раскрываем карточку
-sheetItems.style.maxHeight = "none";
-sheetItems.style.overflow = "visible";
+const clone = original.cloneNode(true);
 
-sheet.style.maxHeight = "none";
-sheet.style.overflow = "visible";
+clone.querySelectorAll("img").forEach(img => {
+  img.remove();
+});
 
-html2canvas(sheet, {
-  scale: 3,
+clone.style.maxHeight = "none";
+clone.style.overflow = "visible";
+
+const cloneItems = clone.querySelector("#sheetItems");
+
+if (cloneItems) {
+  cloneItems.style.maxHeight = "none";
+  cloneItems.style.overflow = "visible";
+}
+
+const sandbox = document.createElement("div");
+
+sandbox.style.position = "fixed";
+sandbox.style.left = "-99999px";
+sandbox.style.top = "0";
+
+sandbox.appendChild(clone);
+
+document.body.appendChild(sandbox);
+
+clone.querySelectorAll("*").forEach(el => {
+  el.style.backgroundImage = "none";
+});
+
+html2canvas(clone, {
+  scale: 2,
   useCORS: false,
-  backgroundColor: "none",
-
-  scrollY: 0,
-  scrollX: 0,
-
-  windowWidth: sheet.scrollWidth,
-  windowHeight: sheet.scrollHeight,
+   imageTimeout: 0,
+   backgroundColor: null
 
 }).then((canvas) => {
+
+  sandbox.remove();
+
+  console.timeEnd("PNG_START");
 
   canvas.toBlob((blob) => {
 
     generatedFile = new File(
-  [blob],
-  "order.png",
-  {
-    type: "image/png"
-  }
-);
+      [blob],
+      "order.png",
+      {
+        type: "image/png"
+      }
+    );
 
-    // возвращаем скролл обратно
-    sheetItems.style.maxHeight = "220px";
-    sheetItems.style.overflowY = "auto";
-
-    sheet.style.maxHeight = "92vh";
-    sheet.style.overflowY = "auto";
 
     document.getElementById("saveBtn").style.display = "flex";
 
@@ -1265,6 +1281,7 @@ function launchTomatoCrown() {
   }, 1000);
 }
 
+
 fetch(
   "https://script.google.com/macros/s/AKfycbwAIYzIGkeGriT_B4Z1M58oK1xqexMiyDpE4eGnQTTQt-CeJwbeh_vkqXMXipE1END2/exec",
 )
@@ -1333,6 +1350,83 @@ fetch(
     });
 
     renderProducts();
+
+const style = document.createElement("style");
+
+style.textContent = `
+@keyframes warningFloat {
+  0%   { transform: translateY(0); }
+  50%  { transform: translateY(-8px); }
+  100% { transform: translateY(0); }
+}
+
+`;
+
+document.head.appendChild(style);
+
+document.querySelectorAll("img").forEach(img => {
+
+  if (!img.src.includes("imgfy.ru")) return;
+
+  img.addEventListener("error", () => {
+
+    document.body.innerHTML = `
+      <div style="
+        min-height:80vh;
+        display:flex;
+        flex-direction:column;
+        align-items:center;
+        justify-content:center;
+        padding:24px;
+        text-align:center;
+      ">
+   
+        <div style="
+        font-size:72px;
+        margin-bottom:20px;
+         animation: warningFloat 3s cubic-bezier(0.42, 0, 0.58, 1) infinite;
+        ">
+        ⚠️
+      </div>
+
+        <div style="
+          font-size:20px;
+          line-height:1.6;
+        ">
+          Отключите VPN и перезапустите каталог
+        </div>
+        <button
+    onmousedown="this.style.transform='scale(.97)'"
+    onmouseup="this.style.transform='scale(1)'"
+    ontouchstart="this.style.transform='scale(.97)'"
+    ontouchend="this.style.transform='scale(1)'"
+    onclick="location.reload()"
+    style="
+    margin-top:24px;
+    min-width:220px;
+    height:52px;
+    border:none;
+    border-radius:26px;
+    font-size:17px;
+    letter-spacing: 0.3px;
+    font-weight:600;
+    background:#18b978;
+    color:#fff;
+    cursor:pointer;
+    box-shadow:0 4px 14px rgba(24,185,120,.25);
+
+    
+  "
+>
+  Перезапустить каталог
+</button>
+  
+      </div>
+    `;
+
+  }, { once: true });
+
+});
 
     updateCart();
 
