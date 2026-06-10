@@ -1853,7 +1853,7 @@ body {
 /* SHEET */
 
 .sheet-box {
-  max-height: 92vh;
+  max-height: 82vh;
 
   overflow-y: auto;
 
@@ -1861,7 +1861,7 @@ body {
 
   max-width: 400px;
 
-  max-height: 850px;
+  max-height: 720px;
 
   overflow-y: auto;
 }
