@@ -3334,7 +3334,7 @@ canvas {
   }
 
   .sheet-box {
-  max-height: calc(100dvh - 60px);
+  max-height: calc(100dvh - 110px);
 }
 
 
