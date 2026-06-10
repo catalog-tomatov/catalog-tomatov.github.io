@@ -661,6 +661,7 @@ body {
 
   overscroll-behavior: none;
   
+  touch-action: pan-y;
 }
 
 .cart-box *,
