@@ -1853,15 +1853,13 @@ body {
 /* SHEET */
 
 .sheet-box {
-  max-height: 82vh;
+  max-height: min(82vh, 720px);
 
   overflow-y: auto;
 
   width: 400px;
 
   max-width: 400px;
-
-  max-height: 720px;
 
   overflow-y: auto;
 }
@@ -3333,6 +3331,11 @@ canvas {
 
     border-radius: 24px;
   }
+
+  .sheet-box {
+  max-height: calc(100dvh - 60px);
+}
+
 
   .cart-title,
   .checkout-title {
