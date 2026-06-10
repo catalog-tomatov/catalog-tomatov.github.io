@@ -60,22 +60,17 @@ function renderProducts() {
   const fragment = document.createDocumentFragment();
 
   products.forEach((product) => {
+    const isHit = product.isHit || product.title.includes("[hit]");
 
-const isHit =
-  product.isHit ||
-  product.title.includes("[hit]");
+    const isNew = product.isNew || product.title.includes("[new]");
 
-const isNew =
-  product.isNew ||
-  product.title.includes("[new]");
-
-const cleanTitle = product.title;
+    const cleanTitle = product.title;
 
     const card = document.createElement("div");
 
     card.className = "product";
 
-  card.dataset.search = `
+    card.dataset.search = `
 ${product.id}
 #${product.id}
 №${product.id}
@@ -106,9 +101,9 @@ ${isNew ? "new новинка" : ""}
   ${cleanTitle}
 </div>
 
-${isHit ? '<div class="badge-hit">🔥ХИТ</div>' : ''}
+${isHit ? '<div class="badge-hit">🔥ХИТ</div>' : ""}
 
-${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ''}
+${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
   </div>
 
   <div class="product-right">
@@ -286,8 +281,7 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ''}
 
       document.getElementById("popupImage").src = product.image;
 
-     document.getElementById("popupTitle").innerHTML =
-  product.title;
+      document.getElementById("popupTitle").innerHTML = product.title;
 
       document.getElementById("popupDescription").innerHTML =
         product.description;
@@ -515,6 +509,21 @@ async function submitOrder() {
 
   btn.innerHTML = '<div class="loading-spinner"></div>';
 
+  const blocker = document.createElement("div");
+
+blocker.id = "loadingBlocker";
+
+blocker.style.cssText = `
+position:fixed;
+inset:0;
+z-index:999999;
+background:transparent;
+background: rgba(0,0,0,0.02);
+touch-action:none;
+`;
+
+document.body.appendChild(blocker);
+
   let name = nameInput.value.trim();
 
   let phone = phoneInput.value.trim();
@@ -540,12 +549,7 @@ async function submitOrder() {
     return sum + item.qty;
   }, 0);
 
-  console.log(
-  "DEBUG",
-  orderMode,
-  selectedOrderColumn,
-  orderLabel
-);
+  console.log("DEBUG", orderMode, selectedOrderColumn, orderLabel);
 
   fetch(
     "https://script.google.com/macros/s/AKfycbwAIYzIGkeGriT_B4Z1M58oK1xqexMiyDpE4eGnQTTQt-CeJwbeh_vkqXMXipE1END2/exec",
@@ -624,6 +628,24 @@ async function submitOrder() {
         `${totalPrice.toLocaleString("ru-RU")} ₽`;
 
       document.getElementById("sheetTotalItems").innerHTML = `${totalItems} п`;
+      localStorage.setItem(
+        "pendingSheet",
+        JSON.stringify({
+          title: document.getElementById("sheetTitle").textContent,
+          date: today.toLocaleDateString("ru-RU"),
+          client: `
+      ${name}
+      <br>
+      ${phone}
+      <div class="sheet-pickup">
+        ${pickupText}
+      </div>
+    `,
+          total: `${totalPrice.toLocaleString("ru-RU")} ₽`,
+          totalItems: `${totalItems} п`,
+          items: cart,
+        }),
+      );
 
       sheetItems.innerHTML = "";
 
@@ -657,7 +679,10 @@ async function submitOrder() {
 `;
       navigator.vibrate?.([80, 50, 80]);
       setTimeout(() => {
+        document.getElementById("loadingBlocker")?.remove();
+
         checkoutModal.style.display = "none";
+
         unlockBody();
 
         sheetModal.style.display = "flex";
@@ -670,7 +695,7 @@ async function submitOrder() {
 
         updateCart();
 
-        localStorage.removeItem("tomatoCart");
+       localStorage.removeItem("tomatoCart");
 
         document.querySelector(".sheet-buttons").style.display = "flex";
 
@@ -704,71 +729,56 @@ async function submitOrder() {
           }
         })();
         setTimeout(() => {
+          document.querySelectorAll("canvas").forEach((c) => c.remove());
+          const original = document.getElementById("sheetBox");
 
+          const clone = original.cloneNode(true);
 
-document.querySelectorAll("canvas").forEach(c => c.remove());
- const original = document.getElementById("sheetBox");
+          clone.querySelectorAll("img").forEach((img) => {
+            img.remove();
+          });
 
-const clone = original.cloneNode(true);
+          clone.style.maxHeight = "none";
+          clone.style.overflow = "visible";
 
-clone.querySelectorAll("img").forEach(img => {
-  img.remove();
-});
+          const cloneItems = clone.querySelector("#sheetItems");
 
-clone.style.maxHeight = "none";
-clone.style.overflow = "visible";
+          if (cloneItems) {
+            cloneItems.style.maxHeight = "none";
+            cloneItems.style.overflow = "visible";
+          }
 
-const cloneItems = clone.querySelector("#sheetItems");
+          const sandbox = document.createElement("div");
 
-if (cloneItems) {
-  cloneItems.style.maxHeight = "none";
-  cloneItems.style.overflow = "visible";
-}
+          sandbox.style.position = "fixed";
+          sandbox.style.left = "-99999px";
+          sandbox.style.top = "0";
 
-const sandbox = document.createElement("div");
+          sandbox.appendChild(clone);
 
-sandbox.style.position = "fixed";
-sandbox.style.left = "-99999px";
-sandbox.style.top = "0";
+          document.body.appendChild(sandbox);
 
-sandbox.appendChild(clone);
+          clone.querySelectorAll("*").forEach((el) => {
+            el.style.backgroundImage = "none";
+          });
 
-document.body.appendChild(sandbox);
+          html2canvas(clone, {
+            scale: 2,
+            useCORS: false,
+            imageTimeout: 0,
+            backgroundColor: null,
+          }).then((canvas) => {
+            sandbox.remove();
 
-clone.querySelectorAll("*").forEach(el => {
-  el.style.backgroundImage = "none";
-});
+            canvas.toBlob((blob) => {
+              generatedFile = new File([blob], "order.png", {
+                type: "image/png",
+              });
 
-html2canvas(clone, {
-  scale: 2,
-  useCORS: false,
-   imageTimeout: 0,
-   backgroundColor: null
-
-}).then((canvas) => {
-
-  sandbox.remove();
-
-  console.timeEnd("PNG_START");
-
-  canvas.toBlob((blob) => {
-
-    generatedFile = new File(
-      [blob],
-      "order.png",
-      {
-        type: "image/png"
-      }
-    );
-
-
-    document.getElementById("saveBtn").style.display = "flex";
-
-  }, "image/png");
-
-});
-
-}, 1800);
+              document.getElementById("saveBtn").style.display = "flex";
+            }, "image/png");
+          });
+        }, 1800);
       }, 900);
     })
 
@@ -786,8 +796,6 @@ html2canvas(clone, {
       showToast("⚠️ Нет соединения с интернетом");
     });
 }
-
-
 
 /* CREATE ORDER */
 
@@ -943,37 +951,44 @@ document.getElementById("createOrderBtn").onclick = async () => {
   return;
 };
 
-
 /* SAVE */
 
 document.getElementById("saveBtn").onclick = async () => {
-
   if (!generatedFile) {
     showToast("⏳ Карточка ещё создаётся");
     return;
   }
 
   try {
+    const hour = new Date().getHours();
+
+    let greeting;
+
+    if (hour >= 5 && hour <= 10) {
+      greeting = "Доброе утро";
+    } else if (hour >= 11 && hour <= 17) {
+      greeting = "Добрый день";
+    } else if (hour >= 18 && hour <= 22) {
+      greeting = "Добрый вечер";
+    } else {
+      greeting = "Доброй ночи";
+    }
 
     await navigator.share({
       files: [generatedFile],
-      title:
-        "Здравствуйте, Сергей! Направляю заказ по семенам томатов для подтверждения.",
+      title: "Заказ по семенам томатов",
+      text: `${greeting}! Направляю заказ по семенам томатов для подтверждения и оплаты. 🍅`,
     });
+
+    localStorage.removeItem("pendingSheet");
 
     setTimeout(() => {
       location.reload();
     }, 300);
-
   } catch (err) {
-
     console.log("Отправка отменена", err);
-
   }
-
 };
-
- 
 
 /* CLOSE MODALS */
 
@@ -1062,7 +1077,6 @@ let orderSending = false;
 let cardDownloaded = false;
 
 let generatedFile = null;
-
 
 /* REMOVE ERROR */
 
@@ -1281,7 +1295,6 @@ function launchTomatoCrown() {
   }, 1000);
 }
 
-
 fetch(
   "https://script.google.com/macros/s/AKfycbwAIYzIGkeGriT_B4Z1M58oK1xqexMiyDpE4eGnQTTQt-CeJwbeh_vkqXMXipE1END2/exec",
 )
@@ -1351,9 +1364,9 @@ fetch(
 
     renderProducts();
 
-const style = document.createElement("style");
+    const style = document.createElement("style");
 
-style.textContent = `
+    style.textContent = `
 @keyframes warningFloat {
   0%   { transform: translateY(0); }
   50%  { transform: translateY(-8px); }
@@ -1362,15 +1375,15 @@ style.textContent = `
 
 `;
 
-document.head.appendChild(style);
+    document.head.appendChild(style);
 
-document.querySelectorAll("img").forEach(img => {
+    document.querySelectorAll("img").forEach((img) => {
+      if (!img.src.includes("imgfy.ru")) return;
 
-  if (!img.src.includes("imgfy.ru")) return;
-
-  img.addEventListener("error", () => {
-
-    document.body.innerHTML = `
+      img.addEventListener(
+        "error",
+        () => {
+          document.body.innerHTML = `
       <div style="
         min-height:80vh;
         display:flex;
@@ -1423,10 +1436,10 @@ document.querySelectorAll("img").forEach(img => {
   
       </div>
     `;
-
-  }, { once: true });
-
-});
+        },
+        { once: true },
+      );
+    });
 
     updateCart();
 
@@ -1477,16 +1490,15 @@ const searchInput = document.getElementById("searchInput");
 const clearSearchBtn = document.getElementById("clearSearch");
 
 searchInput.addEventListener("input", () => {
-  let search =
-  searchInput.value.toLowerCase().trim();
+  let search = searchInput.value.toLowerCase().trim();
 
-if (search === "🔥") {
-  search = "хит";
-}
+  if (search === "🔥") {
+    search = "хит";
+  }
 
-if (search === "⭐") {
-  search = "новинка";
-}
+  if (search === "⭐") {
+    search = "новинка";
+  }
 
   clearSearchBtn.style.display = search ? "block" : "none";
 
@@ -1682,7 +1694,6 @@ newOrderBtn.onclick = () => {
 
 document.getElementById("closeOrderLabelModal").onclick = () => {
   document.getElementById("orderLabelModal").style.display = "none";
-  
 
   document.getElementById("clientModal").style.display = "flex";
 };
@@ -1768,26 +1779,16 @@ function showOrderSelectModal() {
   lockBody();
 }
 
-document.getElementById("hitFilter")
-?.addEventListener("click", () => {
-
+document.getElementById("hitFilter")?.addEventListener("click", () => {
   searchInput.value = "хит";
 
-  searchInput.dispatchEvent(
-    new Event("input")
-  );
-
+  searchInput.dispatchEvent(new Event("input"));
 });
 
-document.getElementById("newFilter")
-?.addEventListener("click", () => {
-
+document.getElementById("newFilter")?.addEventListener("click", () => {
   searchInput.value = "новинка";
 
-  searchInput.dispatchEvent(
-    new Event("input")
-  );
-
+  searchInput.dispatchEvent(new Event("input"));
 });
 
 const hints = document.getElementById("searchHints");
@@ -1797,7 +1798,6 @@ let hintsOpened = false;
 /* показать / скрыть по нажатию */
 
 searchInput.addEventListener("click", (e) => {
-
   e.stopPropagation();
 
   if (hintsOpened) {
@@ -1807,75 +1807,138 @@ searchInput.addEventListener("click", (e) => {
     hints.style.display = "block";
     hintsOpened = true;
   }
-
 });
 
 /* начал печатать -> скрыть */
 
 searchInput.addEventListener("input", () => {
-
   hints.style.display = "none";
   hintsOpened = false;
-
 });
 
 /* клик вне поиска -> скрыть */
 
 document.addEventListener("click", (e) => {
-
-  if (
-    !e.target.closest(".search-box") &&
-    !e.target.closest("#searchHints")
-  ) {
-
+  if (!e.target.closest(".search-box") && !e.target.closest("#searchHints")) {
     hints.style.display = "none";
     hintsOpened = false;
-
   }
-
 });
 
-document
-  .querySelectorAll(".search-hint")
-  .forEach(item => {
+document.querySelectorAll(".search-hint").forEach((item) => {
+  item.addEventListener("click", () => {
+    if (item.dataset.search === "хит") {
+      searchInput.value = "🔥";
+    } else if (item.dataset.search === "новинка") {
+      searchInput.value = "⭐";
+    } else {
+      searchInput.value = item.dataset.search;
+    }
 
-    item.addEventListener("click", () => {
+    searchInput.dispatchEvent(new Event("input"));
 
-      if (item.dataset.search === "хит") {
-  searchInput.value = "🔥";
-}
-
-else if (item.dataset.search === "новинка") {
-  searchInput.value = "⭐";
-}
-
-else {
-  searchInput.value = item.dataset.search;
-}
-
-      searchInput.dispatchEvent(
-        new Event("input")
-      );
-
-      hints.style.display = "none";
-
-    });
-
+    hints.style.display = "none";
+  });
 });
 
 document.getElementById("cartBackBtn").onclick = () => {
-
   cartBox.classList.add("modal-hide");
 
   setTimeout(() => {
-
     cartModal.style.display = "none";
 
     unlockBody();
 
     cartBox.classList.remove("modal-hide");
-
   }, 200);
-
 };
 
+const pendingSheet = localStorage.getItem("pendingSheet");
+
+if (pendingSheet) {
+  const data = JSON.parse(pendingSheet);
+
+  document.getElementById("sheetTitle").textContent = data.title;
+
+  document.getElementById("sheetDate").innerHTML = data.date;
+
+  document.getElementById("sheetClient").innerHTML = data.client;
+
+  document.getElementById("sheetTotal").innerHTML = data.total;
+
+  document.getElementById("sheetTotalItems").innerHTML = data.totalItems;
+
+  sheetItems.innerHTML = data.items
+    .map((item) => {
+      const shortTitle =
+        item.title.length > 14 ? item.title.slice(0, 12) + ".." : item.title;
+
+      return `
+        <div class="sheet-chip">
+          <span class="sheet-name">
+            ${item.id} ${shortTitle}
+          </span>
+
+          <span class="sheet-qty">
+            ${item.qty}п
+          </span>
+        </div>
+      `;
+    })
+    .join("");
+
+  sheetModal.style.display = "flex";
+
+  lockBody();
+
+  document.getElementById("saveBtn").style.display = "none";
+
+  setTimeout(() => {
+
+  const original = document.getElementById("sheetBox");
+
+  const clone = original.cloneNode(true);
+
+  clone.querySelectorAll("img").forEach(img => {
+    img.remove();
+  });
+
+  clone.style.borderRadius = "28px";
+  clone.style.overflow = "hidden";
+
+  const sandbox = document.createElement("div");
+
+  sandbox.style.position = "fixed";
+  sandbox.style.left = "-99999px";
+
+  sandbox.appendChild(clone);
+
+  document.body.appendChild(sandbox);
+
+  html2canvas(clone, {
+    scale: 2,
+    useCORS: false,
+    imageTimeout: 0,
+    backgroundColor: null
+  }).then(canvas => {
+
+    sandbox.remove();
+
+    canvas.toBlob(blob => {
+
+      generatedFile = new File(
+        [blob],
+        "order.png",
+        {
+          type: "image/png"
+        }
+      );
+
+      document.getElementById("saveBtn").style.display = "flex";
+
+    }, "image/png");
+
+  });
+
+}, 300);
+}
