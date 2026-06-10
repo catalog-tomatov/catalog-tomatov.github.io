@@ -1217,6 +1217,8 @@ body {
   backdrop-filter: blur(12px);
 
   transform: translateZ(0);
+
+  overscroll-behavior: none;
 }
 
 /* BOXES */
@@ -1800,6 +1802,8 @@ body {
   border-radius: 28px;
 
   padding: 0;
+
+  -webkit-overflow-scrolling: touch;
 }
 
 .popup-image {
