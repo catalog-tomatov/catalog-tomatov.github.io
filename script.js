@@ -1346,6 +1346,16 @@ fetch(
       pickupMenu.classList.toggle("open");
     });
 
+    document.addEventListener("click", (e) => {
+
+  if (
+    !e.target.closest(".pickup-dropdown")
+  ) {
+    pickupMenu.classList.remove("open");
+  }
+
+});
+
     document.querySelectorAll(".pickup-option").forEach((option) => {
       option.addEventListener("click", () => {
         const text = option.textContent.trim();
