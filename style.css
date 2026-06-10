@@ -296,7 +296,7 @@ body {
   }
 
   100% {
-    transform: scale(0.92) rotate(24deg) translateY(-8px);
+    transform: scale(0.92) rotate(24deg) translateY(-6px);
 
     opacity: 0;
   }
@@ -1587,7 +1587,7 @@ body {
 
   font-size: 20px;
 
-  font-weight: 500;
+  font-weight: 600;
 
   letter-spacing: 1px;
 }
@@ -1787,7 +1787,7 @@ body {
 
   max-width: 420px;
 
-  max-height: calc(100dvh - 100px);
+  max-height: calc(100dvh - 110px);
 
   overflow-y: auto;
 
@@ -3398,6 +3398,11 @@ canvas {
   .loading-text {
     font-size: 18px;
   }
+
+  .crown-pop {
+  width: 40px;
+  height: 34px;
+}
 }
 
 @media (max-width: 392px) {
@@ -3573,6 +3578,11 @@ canvas {
   .loading-text {
     font-size: 16px;
   }
+
+  .crown-pop {
+  width: 36px;
+  height: 30px;
+}
 }
 
 @media (max-width: 380px) {
@@ -3737,5 +3747,9 @@ canvas {
 
   .loading-text {
     font-size: 14px;
+  }
+ .crown-pop {
+  width: 34px;
+  height: 28px;
   }
 }
