@@ -660,8 +660,6 @@ body {
   transform: translateZ(0);
 
   overscroll-behavior: none;
-
-  touch-action: none;
   
 }
 
@@ -1853,13 +1851,15 @@ body {
 /* SHEET */
 
 .sheet-box {
+  display: flex;
+  flex-direction: column;
+
+  width: 100%;
+  max-width: 420px;
+
+  min-height: 220px;
+
   max-height: min(82vh, 720px);
-
-  overflow-y: auto;
-
-  width: 400px;
-
-  max-width: 400px;
 
   overflow-y: auto;
 }
