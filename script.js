@@ -18,6 +18,14 @@ function unlockBody() {
   document.body.style.overflow = "";
 }
 
+function formatPhone(phone) {
+  const digits = phone.replace(/\D/g, "");
+
+  if (digits.length !== 11) return phone;
+
+  return `+7 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7, 9)}-${digits.slice(9, 11)}`;
+}
+
 /* ELEMENTS */
 
 const catalog = document.getElementById("catalog");
@@ -534,12 +542,12 @@ document.body.appendChild(blocker);
       : pickupPoint.options[pickupPoint.selectedIndex].text;
 
   if (foundClient) {
-    name = foundClient.name;
+  name = foundClient.name;
 
-    phone = foundClient.phone;
+  phone = formatPhone(foundClient.phone);
 
-    pickupText = foundClient.pickup;
-  }
+  pickupText = foundClient.pickup;
+}
 
   const totalPrice = cart.reduce((sum, item) => {
     return sum + item.price * item.qty;
