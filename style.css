@@ -18,6 +18,8 @@ body {
   -webkit-font-smoothing: antialiased;
 
   text-rendering: optimizeLegibility;
+
+  touch-action: manipulation;
 }
 
 .app {
@@ -1206,7 +1208,7 @@ body {
 
   justify-content: center;
 
-  padding: 48px 14px 14px;
+  padding: 46px 14px 14px;
 
   box-sizing: border-box;
 
