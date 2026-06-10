@@ -661,7 +661,6 @@ body {
 
   overscroll-behavior: none;
   
-  touch-action: pan-y;
 }
 
 .cart-box *,
@@ -1786,7 +1785,7 @@ body {
 
   max-width: 420px;
 
-  max-height: calc(100dvh - 110px);
+  max-height: calc(100dvh - 120px);
 
   overflow-y: auto;
 
@@ -3334,7 +3333,7 @@ canvas {
   }
 
   .sheet-box {
-  max-height: calc(100dvh - 110px);
+  max-height: calc(100dvh - 120px);
 }
 
 
