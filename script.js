@@ -738,8 +738,11 @@ document.body.appendChild(blocker);
             img.remove();
           });
 
+          clone.style.borderRadius = "28px";
+          clone.style.overflow = "hidden";
+
           clone.style.maxHeight = "none";
-          clone.style.overflow = "visible";
+          
 
           const cloneItems = clone.querySelector("#sheetItems");
 
@@ -783,18 +786,17 @@ document.body.appendChild(blocker);
     })
 
     .catch((err) => {
-      orderSending = false;
 
-      console.log(err);
+  document.getElementById("loadingBlocker")?.remove();
 
-      navigator.vibrate?.([120, 60, 120]);
+  orderSending = false;
 
-      btn.classList.remove("loading-btn");
+  btn.classList.remove("loading-btn");
 
-      btn.innerHTML = "Создать заказ";
+  btn.innerHTML = "Создать заказ";
 
-      showToast("⚠️ Нет соединения с интернетом");
-    });
+  showToast("⚠️ Нет соединения с интернетом");
+});
 }
 
 /* CREATE ORDER */
@@ -1007,6 +1009,9 @@ cartModal.addEventListener("click", (e) => {
 });
 
 checkoutModal.addEventListener("click", (e) => {
+
+  if (orderSending) return;
+
   if (e.target === checkoutModal) {
     checkoutBox.classList.add("modal-hide");
 
@@ -1018,6 +1023,7 @@ checkoutModal.addEventListener("click", (e) => {
       checkoutBox.classList.remove("modal-hide");
     }, 200);
   }
+
 });
 
 popup.addEventListener("click", (e) => {
