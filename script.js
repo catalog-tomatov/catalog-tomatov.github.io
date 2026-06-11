@@ -295,6 +295,16 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
         product.description;
     });
 
+    const img = card.querySelector('.product-image img');
+if (img) {
+  // Если изображение уже загружено (кеш)
+  if (img.complete) {
+    img.classList.add('loaded');
+  } else {
+    img.onload = () => img.classList.add('loaded');
+  }
+}
+
     fragment.appendChild(card);
   });
 
