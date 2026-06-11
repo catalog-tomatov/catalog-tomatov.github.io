@@ -3339,8 +3339,8 @@ canvas {
   }
 
   .sheet-box {
-  max-height: calc(100dvh - 120px);
-  padding: 36px 14px 24px;
+  max-height: min(80vh, 720px);
+  
 }
 
 
