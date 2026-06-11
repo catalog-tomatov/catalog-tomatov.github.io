@@ -855,6 +855,7 @@ body {
 /* IMAGE */
 
 .product-image img {
+
   width: 104px;
 
   height: 116px;
@@ -866,6 +867,13 @@ body {
   display: block;
 
   gap: 10px;
+
+  background:#f0f0f0;
+
+  opacity: 0;
+  
+  transition: opacity 0.3s;
+  
 }
 
 .product-image img.loaded {
