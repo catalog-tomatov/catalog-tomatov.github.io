@@ -919,7 +919,7 @@ document.getElementById("createOrderBtn").onclick = async () => {
 
 <div class="client-row">
   <span class="client-icon phone-icon"></span>
-  <span>${data.phone}</span>
+  <span>${formatPhone(data.phone)}</span>
 </div>
 
 <div class="client-row">
