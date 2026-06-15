@@ -877,7 +877,7 @@ body {
 }
 
 .product-image img.loaded {
-  opacity: 1;
+  opacity: .4;
 
   transform: scale(1);
 }
