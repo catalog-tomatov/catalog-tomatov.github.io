@@ -870,14 +870,14 @@ body {
 
   background:#f0f0f0;
 
-  opacity: 1;
+  opacity: .4;
   
   transition: opacity 0.3s;
   
 }
 
 .product-image img.loaded {
-  opacity: .4;
+  opacity: 1;
 
   transform: scale(1);
 }
