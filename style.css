@@ -870,7 +870,7 @@ body {
 
   background:#f0f0f0;
 
-  opacity: 0;
+  opacity: 1;
   
   transition: opacity 0.3s;
   
