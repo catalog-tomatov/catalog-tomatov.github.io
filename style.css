@@ -19,7 +19,6 @@ body {
 
   text-rendering: optimizeLegibility;
 
-  touch-action: manipulation;
 }
 
 .app {
@@ -801,7 +800,6 @@ body {
     box-shadow 0.18s ease,
     filter 0.18s ease;
 
-  contain: layout paint;
 }
 
 .product:active {
