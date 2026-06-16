@@ -179,6 +179,8 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
 
     card.querySelector(".plus").addEventListener("click", (e) => {
       e.stopPropagation();
+      press(e.currentTarget);
+      press(card);
       vibrate(15);
 
       if (qtyAnimating) return;
@@ -214,6 +216,8 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
 
     card.querySelector(".minus").addEventListener("click", (e) => {
       e.stopPropagation();
+      press(e.currentTarget);
+      press(card);
       vibrate(15);
       if (qtyAnimating) return;
 
@@ -259,7 +263,8 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
 
     card.querySelector(".add-btn").addEventListener("click", (e) => {
       e.stopPropagation();
-
+      press(e.currentTarget);
+      press(card);
       addToCart(product, qty);
       vibrate(15);
     });
@@ -270,6 +275,9 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
       if (e.target.closest(".controls") || e.target.closest(".add-btn")) {
         return;
       }
+
+      press(card);
+
       clearSearchBtn.classList.add("clear-search-pressed");
 
       setTimeout(() => {
@@ -1994,6 +2002,7 @@ function press(btn) {
     btn.classList.remove("pressed");
   }, 120);
 }
+
 document.addEventListener("click", (e) => {
   const btn = e.target.closest("button");
 
