@@ -663,7 +663,7 @@ body {
 
   min-height: 220px;
 
-  max-height: min(80dvh, 720px);
+  max-height: min(78dvh, 720px);
 
   will-change: transform, opacity;
 
@@ -1262,7 +1262,7 @@ body {
 
   min-height: 220px;
 
-  max-height: min(80dvh, 720px);
+  max-height: min(78dvh, 720px);
 }
 /* TITLES */
 
@@ -1799,7 +1799,7 @@ body {
 
   max-width: 420px;
 
-  max-height: min(80dvh, 720px);
+  max-height: min(78dvh, 720px);
 
   overflow-y: hidden;
 
@@ -1828,7 +1828,10 @@ body {
 
 .popup-content {
   padding: 20px;
+  flex-direction: column;
+  min-height: 0;
 }
+
 
 .popup-title {
   font-size: 26px;
@@ -1849,7 +1852,6 @@ body {
 }
 
 .popup-description {
-  margin-top: 14px;
 
   font-size: 17px;
 
@@ -1860,6 +1862,10 @@ body {
   color: #2d2d2d;
 
   display: block;
+
+  overflow-y: auto;
+
+  max-height: 320px;
 
   letter-spacing: 0.15px;
 }
@@ -1875,7 +1881,7 @@ body {
 
   min-height: 220px;
 
-  max-height: min(80dvh, 720px);
+  max-height: min(78dvh, 720px);
 
   overflow-y: auto;
 }
