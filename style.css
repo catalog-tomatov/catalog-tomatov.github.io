@@ -800,7 +800,7 @@ body {
     box-shadow 0.18s ease,
     filter 0.18s ease;
 
-  contain: layout paint;
+
 }
 
 .product:active {
@@ -811,7 +811,6 @@ body {
 
   filter: saturate(1.06);
 
-   transition: none;
 }
 
 /* NUMBER */
