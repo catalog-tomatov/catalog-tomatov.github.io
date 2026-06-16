@@ -85,7 +85,6 @@ body {
 
   transform: translateZ(0);
 
-  will-change: transform;
 }
 
 .header::before {
@@ -772,7 +771,6 @@ body {
 /* PRODUCT */
 
 .product {
-  will-change: transform;
 
   width: 100%;
 
