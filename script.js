@@ -617,7 +617,7 @@ document.body.appendChild(blocker);
 
       document.getElementById("sheetTitle").textContent =
         orderMode === "addon"
-          ? "ДОЗАКАЗАТЬ"
+          ? "ДОЗАКАЗ"
           : orderNumber > 1
             ? "КАРТОЧКА ЗАКАЗА " + orderNumber
             : "КАРТОЧКА ЗАКАЗА";
