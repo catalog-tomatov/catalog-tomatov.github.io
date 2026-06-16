@@ -260,6 +260,12 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
     card.querySelector(".add-btn").addEventListener("click", (e) => {
       e.stopPropagation();
 
+       addBtn.classList.add("pressed");
+
+  setTimeout(() => {
+    addBtn.classList.remove("pressed");
+  }, 120);
+
       addToCart(product, qty);
       vibrate(15);
     });
