@@ -1219,7 +1219,7 @@ body {
 
   justify-content: center;
 
-  padding: 46px 14px 14px;
+  padding: 50px 14px 20px;
 
   box-sizing: border-box;
 
@@ -1826,7 +1826,8 @@ body {
   object-fit: cover;
 }
 
-.popup-content {
+.popup-content { 
+  margin-top: -10px;
   padding: 20px;
   flex-direction: column;
   min-height: 0;
@@ -1865,7 +1866,10 @@ body {
 
   overflow-y: auto;
 
-  max-height: 320px;
+   scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* старый Edge */
+
+  max-height: 360px;
 
   letter-spacing: 0.15px;
 }
