@@ -8,6 +8,10 @@
   --radius-lg: 18px;
 }
 
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   background: var(--color-bg);
 
@@ -20,7 +24,9 @@ body {
   text-rendering: optimizeLegibility;
 
   touch-action: manipulation;
+
 }
+
 
 .app {
   width: min(100%, 440px);
@@ -800,6 +806,7 @@ body {
     box-shadow 0.18s ease,
     filter 0.18s ease;
 
+    contain: layout paint;
 
 }
 
@@ -1041,7 +1048,7 @@ body {
 }
 
 .controls button:active {
-  transform: scale(0.988) translateY(1px);
+  transform: scale(0.985) translateY(1px);
 
   filter: brightness(0.98);
 
@@ -1187,7 +1194,7 @@ body {
 }
 
 .add-btn:active {
-  transform: scale(0.985);
+  transform: scale(0.96);
 
   box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.16);
 }
@@ -1483,7 +1490,7 @@ body {
 }
 
 #checkoutBtn:active {
-  transform: scale(0.985);
+  transform: scale(0.96);
 
   box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.16);
 }
@@ -1518,7 +1525,7 @@ body {
 }
 
 #createOrderBtn:active {
-  transform: scale(0.985);
+  transform: scale(0.96);
 
   box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.16);
 }
@@ -1776,7 +1783,7 @@ body {
 }
 
 .pickup-option:active {
-  transform: scale(0.985);
+  transform: scale(0.96);
 }
 
 .pickup-option:hover {
@@ -1790,7 +1797,7 @@ body {
 
   max-width: 420px;
 
-  max-height: calc(100dvh - 100px);
+  max-height: min(82dvh, 720px);
 
   overflow-y: auto;
 
@@ -2049,7 +2056,7 @@ body {
 }
 
 #saveBtn:active {
-  transform: scale(0.985);
+  transform: scale(0.96);
 }
 
 #saveBtn:hover {
@@ -2903,7 +2910,7 @@ canvas {
 }
 
 .order-label-btn:active {
-  transform: scale(0.98);
+  transform: scale(0.96);
 }
 
 #newOrderBtn {
