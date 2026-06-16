@@ -1219,7 +1219,7 @@ body {
 
   justify-content: center;
 
-  padding: 50px 14px 20px;
+  padding: 50px 14px 14px;
 
   box-sizing: border-box;
 
@@ -1815,7 +1815,8 @@ body {
 
   padding: 0;
 
-  -webkit-overflow-scrolling: touch;
+  
+
 }
 
 .popup-image {
@@ -1827,9 +1828,11 @@ body {
 }
 
 .popup-content { 
+  display: flex;
+  flex-direction: column;
+  flex: 1;
   margin-top: -10px;
   padding: 20px;
-  flex-direction: column;
   min-height: 0;
 }
 
@@ -1847,8 +1850,7 @@ body {
 }
 
 .popup-features {
-  margin-bottom: 12px;
-
+ 
   font-weight: 700;
 }
 
@@ -1864,15 +1866,16 @@ body {
 
   display: block;
 
+  letter-spacing: 0.15px;
+
   overflow-y: auto;
 
-   scrollbar-width: none; /* Firefox */
-  -ms-overflow-style: none; /* старый Edge */
+  touch-action: pan-y;
 
-  max-height: 360px;
+  -webkit-overflow-scrolling: touch;
 
-  letter-spacing: 0.15px;
 }
+
 
 /* SHEET */
 
