@@ -260,12 +260,6 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
     card.querySelector(".add-btn").addEventListener("click", (e) => {
       e.stopPropagation();
 
-       addBtn.classList.add("pressed");
-
-  setTimeout(() => {
-    addBtn.classList.remove("pressed");
-  }, 120);
-
       addToCart(product, qty);
       vibrate(15);
     });
@@ -1988,3 +1982,22 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js');
   });
 }
+
+function press(btn) {
+  btn.classList.remove("pressed");
+
+  void btn.offsetWidth;
+
+  btn.classList.add("pressed");
+
+  setTimeout(() => {
+    btn.classList.remove("pressed");
+  }, 120);
+}
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("button");
+
+  if (!btn) return;
+
+  press(btn);
+});
