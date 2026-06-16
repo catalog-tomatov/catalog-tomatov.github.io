@@ -810,8 +810,8 @@ body {
 
 }
 
-.product:active {
-  transform: scale(0.96) translateY(1.4px);
+.product.pressed {
+  transform: scale(0.98) translateY(1.4px);
 
   box-shadow: 0px 6px 18px rgba(0, 0, 0, 0.1);
   inset: 0 2px 6px rgba(0, 0, 0, 0.04);
