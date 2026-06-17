@@ -1123,10 +1123,19 @@ nameInput.addEventListener("input", () => {
 phoneInput.addEventListener("input", () => {
   let value = phoneInput.value.replace(/\D/g, "");
 
+  if (
+  value.length === 2 &&
+  value[1] === "7" &&
+  value[0] !== "7"
+) {
+  value = "7" + value[0];
+}
+
   if (value.startsWith("8")) {
     value = "7" + value.slice(1);
   }
 
+ 
   if (!value.startsWith("7")) {
     value = "7" + value;
   }
@@ -1892,6 +1901,18 @@ document.getElementById("cartBackBtn").onclick = () => {
     unlockBody();
 
     cartBox.classList.remove("modal-hide");
+  }, 200);
+};
+
+document.getElementById("checkoutBackBtn").onclick = () => {
+  checkoutBox.classList.add("modal-hide");
+
+  setTimeout(() => {
+    checkoutModal.style.display = "none";
+
+    unlockBody();
+
+    checkoutBox.classList.remove("modal-hide");
   }, 200);
 };
 
