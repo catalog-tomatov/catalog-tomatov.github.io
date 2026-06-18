@@ -1905,6 +1905,9 @@ document.getElementById("cartBackBtn").onclick = () => {
 };
 
 document.getElementById("checkoutBackBtn").onclick = () => {
+
+  if (orderSending) return;
+
   checkoutBox.classList.add("modal-hide");
 
   setTimeout(() => {
@@ -1914,6 +1917,7 @@ document.getElementById("checkoutBackBtn").onclick = () => {
 
     checkoutBox.classList.remove("modal-hide");
   }, 200);
+
 };
 
 const pendingSheet = localStorage.getItem("pendingSheet");
