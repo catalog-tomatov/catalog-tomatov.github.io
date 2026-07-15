@@ -26,6 +26,77 @@ function formatPhone(phone) {
   return `+7 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7, 9)}-${digits.slice(9, 11)}`;
 }
 
+function normalizeSearchText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const EN_KEYBOARD_LAYOUT = "qwertyuiop[]asdfghjkl;'zxcvbnm,.";
+const RU_KEYBOARD_LAYOUT = "йцукенгшщзхъфывапролджэячсмитьбю";
+
+function convertKeyboardLayout(value) {
+  return Array.from(String(value || "").toLowerCase())
+    .map((character) => {
+      let index = EN_KEYBOARD_LAYOUT.indexOf(character);
+      if (index !== -1) return RU_KEYBOARD_LAYOUT[index];
+
+      index = RU_KEYBOARD_LAYOUT.indexOf(character);
+      if (index !== -1) return EN_KEYBOARD_LAYOUT[index];
+
+      return character;
+    })
+    .join("");
+}
+
+function getSearchVariants(value) {
+  const normalized = normalizeSearchText(value);
+  const converted = normalizeSearchText(convertKeyboardLayout(normalized));
+
+  return Array.from(new Set([normalized, converted])).filter(Boolean);
+}
+
+function formatVarietyCount(count) {
+  const mod100 = count % 100;
+  const mod10 = count % 10;
+
+  if (mod100 >= 11 && mod100 <= 14) return count + " сортов";
+  if (mod10 === 1) return count + " сорт";
+  if (mod10 >= 2 && mod10 <= 4) return count + " сорта";
+  return count + " сортов";
+}
+
+function escapeHtml(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error("HTTP " + response.status);
+    }
+
+    return await response.json();
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 /* ELEMENTS */
 
 const catalog = document.getElementById("catalog");
@@ -54,20 +125,144 @@ const sheetBox = document.querySelector(".sheet-box");
 
 let cart = [];
 
+let activeQuickFilter = "";
+let catalogScrollPosition = 0;
+
 const savedCart = localStorage.getItem("tomatoCart");
 
 if (savedCart) {
-  cart = JSON.parse(savedCart);
+  try {
+    const parsedCart = JSON.parse(savedCart);
+    cart = Array.isArray(parsedCart) ? parsedCart : [];
+  } catch (error) {
+    localStorage.removeItem("tomatoCart");
+  }
+}
+
+function getCartQuantity(productId) {
+  const item = cart.find((cartItem) => String(cartItem.id) === String(productId));
+  return item ? Number(item.qty) || 0 : 0;
+}
+
+function changeCartQuantity(productId, delta) {
+  const index = cart.findIndex(
+    (item) => String(item.id) === String(productId),
+  );
+
+  if (index === -1) return false;
+
+  cart[index].qty = Math.max(0, (Number(cart[index].qty) || 0) + delta);
+
+  if (cart[index].qty === 0) {
+    cart.splice(index, 1);
+  }
+
+  updateCart();
+  return true;
+}
+
+function syncProductCardsFromCart() {
+  document.querySelectorAll(".product").forEach((card) => {
+    const inCart = getCartQuantity(card.dataset.productId);
+    const button = card.querySelector(".add-btn");
+    const stamp = card.querySelector(".cart-stamp");
+
+    if (!button || card.classList.contains("out-of-stock")) return;
+
+    card.classList.toggle("in-cart", inCart > 0);
+    button.classList.remove("added");
+    button.textContent = "Добавить";
+    button.setAttribute(
+      "aria-label",
+      inCart > 0 ? "Добавить ещё. В корзине " + inCart : "Добавить в корзину",
+    );
+
+    if (stamp) {
+      stamp.textContent = inCart > 0 ? "✓ Добавлено " + inCart : "";
+      stamp.setAttribute("aria-hidden", inCart > 0 ? "false" : "true");
+    }
+
+    if (typeof card.setDisplayedQuantity === "function") {
+      card.setDisplayedQuantity(inCart > 0 ? inCart : 1);
+    }
+  });
 }
 
 /* PRODUCTS */
+
+function fitProductTitles(root = document) {
+  root.querySelectorAll(".product-title").forEach((title) => {
+    const card = title.closest(".product");
+    if (card && card.style.display === "none") return;
+    title.style.removeProperty("font-size");
+
+    const availableWidth = title.clientWidth;
+    const words = title.querySelectorAll(".product-title-word");
+
+    if (!availableWidth || !words.length) return;
+
+    const baseSize = Number.parseFloat(getComputedStyle(title).fontSize) || 16;
+    let widestWord = 0;
+
+    words.forEach((word) => {
+      widestWord = Math.max(widestWord, word.getBoundingClientRect().width);
+    });
+
+    if (widestWord <= availableWidth) return;
+
+    const fittedSize = Math.max(
+      11.5,
+      Math.floor((baseSize * availableWidth * 0.96) / widestWord * 10) / 10,
+    );
+
+    title.style.setProperty("font-size", fittedSize + "px", "important");
+  });
+}
+
+let titleFitObserver = null;
+
+function observeProductTitleFitting() {
+  if (titleFitObserver) {
+    titleFitObserver.disconnect();
+  }
+
+  if (!("IntersectionObserver" in window)) {
+    fitProductTitles();
+    return;
+  }
+
+  titleFitObserver = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          fitProductTitles(entry.target);
+        }
+      });
+    },
+    { rootMargin: "350px 0px" },
+  );
+
+  document.querySelectorAll(".product").forEach((card) => {
+    titleFitObserver.observe(card);
+  });
+}
+
+let titleResizeTimer = null;
+
+window.addEventListener("resize", () => {
+  clearTimeout(titleResizeTimer);
+
+  titleResizeTimer = setTimeout(() => {
+    fitProductTitles();
+  }, 100);
+});
 
 function renderProducts() {
   catalog.innerHTML = "";
 
   const fragment = document.createDocumentFragment();
 
-  products.forEach((product) => {
+  products.forEach((product, productIndex) => {
     const isHit = product.isHit || product.title.includes("[hit]");
 
     const isNew = product.isNew || product.title.includes("[new]");
@@ -78,7 +273,16 @@ function renderProducts() {
 
     card.className = "product";
 
-    card.dataset.search = `
+    if (productIndex < 8) {
+      card.classList.add("product-enter");
+      card.style.setProperty("--enter-delay", productIndex * 35 + "ms");
+    }
+
+    card.dataset.productId = String(product.id);
+    card.dataset.isHit = isHit ? "true" : "false";
+    card.dataset.isNew = isNew ? "true" : "false";
+
+    card.dataset.search = normalizeSearchText(`
 ${product.id}
 #${product.id}
 №${product.id}
@@ -86,7 +290,7 @@ ${product.title}
 ${product.description}
 ${isHit ? "hit хит" : ""}
 ${isNew ? "new новинка" : ""}
-`.toLowerCase();
+`);
 
     card.innerHTML = `
 
@@ -98,7 +302,12 @@ ${isNew ? "new новинка" : ""}
 
   <img
     src="${product.image}"
-    loading="${product.id <= 8 ? "eager" : "lazy"}"
+    alt="${escapeHtml(product.title)}"
+    width="104"
+    height="116"
+    loading="${productIndex < 4 ? "eager" : "lazy"}"
+    fetchpriority="${productIndex < 2 ? "high" : "auto"}"
+    decoding="async"
   >
 
 </div>
@@ -112,6 +321,8 @@ ${isNew ? "new новинка" : ""}
 ${isHit ? '<div class="badge-hit">🔥ХИТ</div>' : ""}
 
 ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
+
+<div class="cart-stamp" aria-live="polite" aria-hidden="true"></div>
   </div>
 
   <div class="product-right">
@@ -122,8 +333,8 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
 
     <div class="controls">
 
-      <button class="minus">
-        -
+      <button class="minus" aria-label="Уменьшить количество">
+        −
       </button>
 
       <span class="qty">
@@ -134,7 +345,7 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
 
 </span>
 
-      <button class="plus">
+      <button class="plus" aria-label="Увеличить количество">
         +
       </button>
 
@@ -149,17 +360,21 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
 `;
 
     const titleEl = card.querySelector(".product-title");
+    const titleLength = String(product.title || "").length;
+    const titleWords = String(product.title || "").trim().split(/\s+/);
 
-    let size = window.innerWidth <= 390 ? 15.8 : 16;
+    titleEl.replaceChildren();
 
-    const len = product.title.length;
+    titleWords.forEach((wordText) => {
+      const word = document.createElement("span");
 
-    if (len > 15) size -= 0.3;
-    if (len > 20) size -= 0.5;
-    if (len > 24) size -= 0.8;
-    if (len > 36) size -= 1;
+      word.className = "product-title-word";
+      word.textContent = wordText;
+      titleEl.appendChild(word);
+    });
 
-    titleEl.style.fontSize = size + "px";
+    if (titleLength > 24) titleEl.classList.add("title-long");
+    if (titleLength > 40) titleEl.classList.add("title-very-long");
 
     let qty = 1;
 
@@ -175,6 +390,11 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
 
     const minusBtn = card.querySelector(".minus");
 
+    card.setDisplayedQuantity = (value) => {
+      qty = Math.max(1, Number(value) || 1);
+      qtyText.textContent = String(qty);
+    };
+
     /* PLUS */
 
     card.querySelector(".plus").addEventListener("click", (e) => {
@@ -184,6 +404,19 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
       vibrate(15);
 
       if (qtyAnimating) return;
+
+      const cartQty = getCartQuantity(product.id);
+
+      if (cartQty > 0) {
+        qtyBubble.classList.add("qty-bounce");
+        changeCartQuantity(product.id, 1);
+
+        setTimeout(() => {
+          qtyBubble.classList.remove("qty-bounce");
+        }, 220);
+
+        return;
+      }
 
       qtyAnimating = true;
 
@@ -220,6 +453,19 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
       press(card);
       vibrate(15);
       if (qtyAnimating) return;
+
+      const cartQty = getCartQuantity(product.id);
+
+      if (cartQty > 0) {
+        qtyBubble.classList.add("qty-bounce");
+        changeCartQuantity(product.id, -1);
+
+        setTimeout(() => {
+          qtyBubble.classList.remove("qty-bounce");
+        }, 220);
+
+        return;
+      }
 
       qtyAnimating = true;
 
@@ -265,7 +511,9 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
       e.stopPropagation();
       press(e.currentTarget);
       press(card);
-      addToCart(product, qty);
+      const cartQty = getCartQuantity(product.id);
+      addToCart(product, cartQty > 0 ? 1 : qty);
+      animateAddedCard(card);
       vibrate(15);
     });
 
@@ -277,12 +525,6 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
       }
 
       press(card);
-
-      clearSearchBtn.classList.add("clear-search-pressed");
-
-      setTimeout(() => {
-        clearSearch();
-      }, 120);
 
       setTimeout(() => {
         popup.style.display = "flex";
@@ -297,9 +539,9 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
 
       document.getElementById("popupImage").src = product.image;
 
-      document.getElementById("popupTitle").innerHTML = product.title;
+      document.getElementById("popupTitle").textContent = product.title;
 
-      document.getElementById("popupDescription").innerHTML =
+      document.getElementById("popupDescription").textContent =
         product.description;
     });
 
@@ -317,13 +559,27 @@ if (img) {
   });
 
   catalog.appendChild(fragment);
+  observeProductTitleFitting();
+  syncProductCardsFromCart();
 }
 
 /* ADD TO CART */
 
+function animateAddedCard(card) {
+  if (!card) return;
+
+  card.classList.remove("cart-add-pulse");
+  void card.offsetWidth;
+  card.classList.add("cart-add-pulse");
+
+  setTimeout(() => {
+    card.classList.remove("cart-add-pulse");
+  }, 420);
+}
+
 function addToCart(product, qty) {
   const existing = cart.find((item) => {
-    return item.id === product.id;
+    return String(item.id) === String(product.id);
   });
 
   if (existing) {
@@ -400,6 +656,11 @@ function updateCart() {
   }
 
   renderCart();
+  syncProductCardsFromCart();
+
+  if (activeQuickFilter === "added") {
+    requestAnimationFrame(applyProductSearch);
+  }
 
   localStorage.setItem("tomatoCart", JSON.stringify(cart));
 }
@@ -422,15 +683,15 @@ function renderCart() {
 
       <div class="cart-controls">
 
-        <button class="minus">
-          -
+        <button class="minus" aria-label="Уменьшить количество">
+          −
         </button>
 
         <span class="cart-qty">
         ${item.qty}
         </span>
 
-        <button class="plus">
+        <button class="plus" aria-label="Увеличить количество">
           +
         </button>
 
@@ -468,6 +729,9 @@ function renderCart() {
 
 document.getElementById("openCartBtn").onclick = () => {
   vibrate(15);
+
+  catalogScrollPosition = window.scrollY;
+  sessionStorage.setItem("tomatoCatalogScroll", String(catalogScrollPosition));
 
   lockBody();
 
@@ -507,13 +771,15 @@ document.getElementById("checkoutBtn").onclick = () => {
 };
 
 async function submitOrder() {
-  console.log("submitOrder", orderSending, orderMode, foundClient);
 
   if (orderSending) return;
 
   orderSending = true;
 
   const btn = document.getElementById("createOrderBtn");
+  const orderSubmitError = document.getElementById("orderSubmitError");
+
+  if (orderSubmitError) orderSubmitError.hidden = true;
 
   const nameInput = document.getElementById("clientName");
 
@@ -532,6 +798,8 @@ async function submitOrder() {
   }
 
   btn.classList.add("loading-btn");
+  btn.disabled = true;
+  btn.setAttribute("aria-busy", "true");
 
   btn.innerHTML = '<div class="loading-spinner"></div>';
 
@@ -575,7 +843,6 @@ document.body.appendChild(blocker);
     return sum + item.qty;
   }, 0);
 
-  console.log("DEBUG", orderMode, selectedOrderColumn, orderLabel);
 
   fetch(
     "https://script.google.com/macros/s/AKfycbwAIYzIGkeGriT_B4Z1M58oK1xqexMiyDpE4eGnQTTQt-CeJwbeh_vkqXMXipE1END2/exec",
@@ -593,6 +860,8 @@ document.body.appendChild(blocker);
 
         selectedOrderColumn: selectedOrderColumn,
 
+        selectedOrderId: selectedOrderId,
+
         orderLabel: orderLabel,
 
         items: cart.map((item) => ({
@@ -606,69 +875,79 @@ document.body.appendChild(blocker);
   )
     .then((res) => {
       if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
+        throw new Error("HTTP " + res.status);
       }
+
+      return res.json();
     })
-    .then(() => {
+    .then((result) => {
+      if (!result.success || !result.orderId) {
+        throw new Error("Сервер не вернул номер заказа");
+      }
+
+      const orderId = result.orderId;
+      const serverTotal = Number(result.total);
+      const confirmedTotalPrice = Number.isFinite(serverTotal)
+        ? serverTotal
+        : totalPrice;
+
+      lastOrderId = orderId;
+      const copyOrderIdBtn = document.getElementById("copyOrderIdBtn");
+      copyOrderIdBtn.style.display = "inline-flex";
+      copyOrderIdBtn.textContent = "Скопировать " + orderId;
       const today = new Date();
 
-      console.log("OPEN CLIENT MODAL", new Date().toLocaleTimeString());
-
-      console.log("OPEN SHEET MODAL", new Date().toLocaleTimeString());
       document.getElementById("clientModal").style.display = "none";
       unlockBody();
 
       document.getElementById("orderSelectModal").style.display = "none";
       unlockBody();
 
-      const orderNumber = foundClient ? foundClient.orderCount + 1 : 1;
+      const orderNumber = result.orderNumber || (foundClient ? foundClient.orderCount + 1 : 1);
 
       document.getElementById("sheetTitle").textContent =
         orderMode === "addon"
-          ? "ДОЗАКАЗ"
-          : orderNumber > 1
-            ? "КАРТОЧКА ЗАКАЗА " + orderNumber
-            : "КАРТОЧКА ЗАКАЗА";
+          ? "ДОЗАКАЗ " + orderId
+          : "ЗАКАЗ " + orderId;
 
       document.getElementById("sheetDate").innerHTML =
         today.toLocaleDateString("ru-RU");
 
       document.getElementById("sheetOrderLabel").textContent = orderLabel || "";
 
-      const pickupText =
-        pickupPoint.value === "ozon"
-          ? `Ozon • ${pvzAddress.value}`
-          : pickupPoint.options[pickupPoint.selectedIndex].text;
 
       document.getElementById("sheetClient").innerHTML = `
-    ${name}
+    ${escapeHtml(name)}
     <br>
-    ${phone}
+    ${escapeHtml(phone)}
 
     <div class="sheet-pickup">
-      ${pickupText}
+      ${escapeHtml(pickupText)}
     </div>
   `;
 
       document.getElementById("sheetTotal").innerHTML =
-        `${totalPrice.toLocaleString("ru-RU")} ₽`;
+        `${confirmedTotalPrice.toLocaleString("ru-RU")} ₽`;
 
       document.getElementById("sheetTotalItems").innerHTML = `${totalItems} п`;
+      localStorage.removeItem(ORDER_DRAFT_KEY);
+
       localStorage.setItem(
         "pendingSheet",
         JSON.stringify({
           title: document.getElementById("sheetTitle").textContent,
           date: today.toLocaleDateString("ru-RU"),
           client: `
-      ${name}
+      ${escapeHtml(name)}
       <br>
-      ${phone}
+      ${escapeHtml(phone)}
       <div class="sheet-pickup">
-        ${pickupText}
+        ${escapeHtml(pickupText)}
       </div>
     `,
-          total: `${totalPrice.toLocaleString("ru-RU")} ₽`,
+          total: `${confirmedTotalPrice.toLocaleString("ru-RU")} ₽`,
           totalItems: `${totalItems} п`,
+          orderId: orderId,
           items: cart,
         }),
       );
@@ -686,11 +965,11 @@ document.body.appendChild(blocker);
   <div class="sheet-chip">
 
     <span class="sheet-name">
-      ${item.id} ${shortTitle}
+      ${escapeHtml(item.id)} ${escapeHtml(shortTitle)}
     </span>
 
     <span class="sheet-qty">
-      ${item.qty}п
+      ${Number(item.qty) || 0}п
     </span>
 
   </div>
@@ -727,33 +1006,36 @@ document.body.appendChild(blocker);
 
         document.body.style.overflow = "hidden";
 
-        const duration = 800;
+        if (
+          typeof window.confetti === "function" &&
+          !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ) {
+          const duration = 800;
+          const end = Date.now() + duration;
+          const colors = ["#0e8f6c", "#ffd76d", "#9b1801", "#ffffff"];
 
-        const end = Date.now() + duration;
+          (function frame() {
+            window.confetti({
+              particleCount: 4,
+              angle: 60,
+              spread: 70,
+              origin: { x: 0 },
+              colors,
+            });
 
-        const colors = ["#18b978", "#ffd76d", "#9b1801", "#ffffff"];
+            window.confetti({
+              particleCount: 4,
+              angle: 120,
+              spread: 70,
+              origin: { x: 1 },
+              colors,
+            });
 
-        (function frame() {
-          confetti({
-            particleCount: 4,
-            angle: 60,
-            spread: 70,
-            origin: { x: 0 },
-            colors,
-          });
-
-          confetti({
-            particleCount: 4,
-            angle: 120,
-            spread: 70,
-            origin: { x: 1 },
-            colors,
-          });
-
-          if (Date.now() < end) {
-            requestAnimationFrame(frame);
-          }
-        })();
+            if (Date.now() < end) {
+              requestAnimationFrame(frame);
+            }
+          })();
+        }
         setTimeout(() => {
           document.querySelectorAll("canvas").forEach((c) => c.remove());
           const original = document.getElementById("sheetBox");
@@ -791,7 +1073,13 @@ document.body.appendChild(blocker);
             el.style.backgroundImage = "none";
           });
 
-          html2canvas(clone, {
+          if (typeof window.html2canvas !== "function") {
+            sandbox.remove();
+            showToast("Заказ создан, но карточку не удалось подготовить" );
+            return;
+          }
+
+          window.html2canvas(clone, {
             scale: 2,
             useCORS: false,
             imageTimeout: 0,
@@ -800,7 +1088,7 @@ document.body.appendChild(blocker);
             sandbox.remove();
 
             canvas.toBlob((blob) => {
-              generatedFile = new File([blob], "order.png", {
+              generatedFile = new File([blob], "order-" + orderId + ".png", {
                 type: "image/png",
               });
 
@@ -813,16 +1101,22 @@ document.body.appendChild(blocker);
 
     .catch((err) => {
 
-  document.getElementById("loadingBlocker")?.remove();
+      console.error("Не удалось создать заказ", err);
+      document.getElementById("loadingBlocker")?.remove();
 
-  orderSending = false;
+      orderSending = false;
 
-  btn.classList.remove("loading-btn");
+      btn.classList.remove("loading-btn");
+      btn.disabled = false;
+      btn.removeAttribute("aria-busy");
+      btn.innerHTML = "Повторить";
 
-  btn.innerHTML = "Создать заказ";
+      if (orderSubmitError) {
+        orderSubmitError.hidden = false;
+      }
 
-  showToast("⚠️ Нет соединения с интернетом");
-});
+      showToast("⚠️ Google временно не ответил. Корзина сохранена");
+    });
 }
 
 /* CREATE ORDER */
@@ -832,8 +1126,13 @@ document.getElementById("createOrderBtn").onclick = async () => {
   orderSending = true;
 
   const btn = document.getElementById("createOrderBtn");
+  const orderSubmitError = document.getElementById("orderSubmitError");
+
+  if (orderSubmitError) orderSubmitError.hidden = true;
 
   btn.classList.add("loading-btn");
+  btn.disabled = true;
+  btn.setAttribute("aria-busy", "true");
 
   btn.innerHTML = '<div class="loading-spinner"></div>';
 
@@ -894,7 +1193,10 @@ document.getElementById("createOrderBtn").onclick = async () => {
   if (hasError) {
     btn.classList.remove("loading-btn");
 
-    btn.innerHTML = "Создать заказ";
+    btn.disabled = false;
+  btn.removeAttribute("aria-busy");
+
+  btn.innerHTML = "Создать заказ";
 
     orderSending = false;
 
@@ -904,12 +1206,12 @@ document.getElementById("createOrderBtn").onclick = async () => {
   const phone = phoneInput.value.trim().replace(/\D/g, "");
 
   try {
-    const res = await fetch(
+    const data = await fetchJsonWithTimeout(
       "https://script.google.com/macros/s/AKfycbwAIYzIGkeGriT_B4Z1M58oK1xqexMiyDpE4eGnQTTQt-CeJwbeh_vkqXMXipE1END2/exec?phone=" +
-        phone,
+        encodeURIComponent(phone),
+      {},
+      10000,
     );
-
-    const data = await res.json();
 
     if (data.found || data["Найдено"]) {
       orderSending = false;
@@ -922,17 +1224,17 @@ document.getElementById("createOrderBtn").onclick = async () => {
 
   <div class="client-row">
   <span class="client-icon person-icon"></span>
-  <span>${data.name}</span>
+  <span>${escapeHtml(data.name)}</span>
 </div>
 
 <div class="client-row">
   <span class="client-icon phone-icon"></span>
-  <span>${formatPhone(data.phone)}</span>
+  <span>${escapeHtml(formatPhone(data.phone))}</span>
 </div>
 
 <div class="client-row">
   <span class="client-icon map-icon"></span>
-  <span>${data.pickup}</span>
+  <span>${escapeHtml(data.pickup)}</span>
 </div>
 
   <div class="client-orders">
@@ -963,11 +1265,23 @@ document.getElementById("createOrderBtn").onclick = async () => {
       lockBody();
       btn.classList.remove("loading-btn");
 
-      btn.innerHTML = "Создать заказ";
+      btn.disabled = false;
+  btn.removeAttribute("aria-busy");
+
+  btn.innerHTML = "Создать заказ";
       return;
     }
   } catch (err) {
-    console.log(err);
+    console.error("Не удалось проверить клиента", err);
+
+    orderSending = false;
+    btn.classList.remove("loading-btn");
+    btn.disabled = false;
+    btn.removeAttribute("aria-busy");
+    btn.innerHTML = "Создать заказ";
+
+    showToast("⚠️ Не удалось проверить номер. Повторите ещё раз");
+    return;
   }
 
   orderMode = "normal";
@@ -1100,6 +1414,8 @@ let clientOrders = [];
 
 let selectedOrderColumn = null;
 
+let selectedOrderId = null;
+
 let orderMode = "normal";
 
 let orderLabel = "";
@@ -1109,6 +1425,47 @@ let orderSending = false;
 let cardDownloaded = false;
 
 let generatedFile = null;
+
+let lastOrderId = "";
+
+const ORDER_DRAFT_KEY = "tomatoOrderDraft";
+
+function saveOrderDraft() {
+  localStorage.setItem(
+    ORDER_DRAFT_KEY,
+    JSON.stringify({
+      name: nameInput.value,
+      phone: phoneInput.value,
+      pickup: pickupPoint.value,
+      pickupText: pickupTrigger.textContent,
+      pvz: pvzAddress.value,
+    }),
+  );
+}
+
+function restoreOrderDraft() {
+  try {
+    const draft = JSON.parse(localStorage.getItem(ORDER_DRAFT_KEY) || "null");
+    if (!draft) return;
+
+    nameInput.value = draft.name || "";
+    phoneInput.value = draft.phone || "+7";
+    pickupPoint.value = draft.pickup || "";
+    pickupTrigger.textContent = draft.pickupText || "Выберите точку выдачи";
+    pvzAddress.value = draft.pvz || "";
+    pvzAddress.style.display = pickupPoint.value === "ozon" ? "block" : "none";
+  } catch (error) {
+    localStorage.removeItem(ORDER_DRAFT_KEY);
+  }
+}
+
+restoreOrderDraft();
+
+[nameInput, phoneInput, pvzAddress].forEach((input) => {
+  input.addEventListener("input", saveOrderDraft);
+});
+
+pickupPoint.addEventListener("change", saveOrderDraft);
 
 /* REMOVE ERROR */
 
@@ -1187,8 +1544,6 @@ document.getElementById("popupBack").onclick = () => {
     unlockBody();
 
     popupBox.classList.remove("modal-hide");
-
-    clearSearch();
   }, 200);
 };
 
@@ -1336,11 +1691,11 @@ function launchTomatoCrown() {
   }, 1000);
 }
 
-fetch(
+fetchJsonWithTimeout(
   "https://script.google.com/macros/s/AKfycbwAIYzIGkeGriT_B4Z1M58oK1xqexMiyDpE4eGnQTTQt-CeJwbeh_vkqXMXipE1END2/exec",
+  {},
+  12000,
 )
-  .then((res) => res.json())
-
   .then((data) => {
     products = data;
     const availableProducts = products.filter((p) => p.available === true);
@@ -1414,6 +1769,19 @@ fetch(
     });
 
     renderProducts();
+
+    const deferredInfoTag = document.getElementById("infoToggle");
+    const loadInfoTag = () => {
+      if (deferredInfoTag?.dataset.src && !deferredInfoTag.hasAttribute("src")) {
+        deferredInfoTag.src = deferredInfoTag.dataset.src;
+      }
+    };
+
+    if ("requestIdleCallback" in window) {
+      window.requestIdleCallback(loadInfoTag, { timeout: 1800 });
+    } else {
+      setTimeout(loadInfoTag, 1200);
+    }
 
     const style = document.createElement("style");
 
@@ -1495,8 +1863,11 @@ fetch(
     updateCart();
 
     const loadingTomato = document.getElementById("loadingTomato");
+    const loadingScreen = document.getElementById("loadingScreen");
 
     // стартуем с надутого
+    if (!loadingTomato || !loadingScreen) return;
+
     loadingTomato.src = "./tomato/tomato-breath.png";
 
     setTimeout(() => {
@@ -1508,9 +1879,25 @@ fetch(
       // полетел после возврата
       const target = document.querySelector(".logo-tomato-wrap");
 
+      if (!target) {
+        loadingScreen.remove();
+        return;
+      }
+
       const rect = target.getBoundingClientRect();
 
-      loadingTomato.style.transition = "all 0.55s cubic-bezier(0.22,1,0.36,1)";
+      loadingScreen.classList.add("is-finishing");
+      const loadingText = loadingScreen.querySelector(".loading-text");
+      if (loadingText) {
+        loadingText.style.opacity = "0";
+        loadingText.style.transform = "translateY(6px)";
+      }
+
+      loadingTomato.style.transition =
+        "left 0.52s cubic-bezier(0.22,1,0.36,1), " +
+        "top 0.52s cubic-bezier(0.22,1,0.36,1), " +
+        "width 0.52s cubic-bezier(0.22,1,0.36,1), " +
+        "transform 0.52s cubic-bezier(0.22,1,0.36,1)";
 
       loadingTomato.style.left = `${rect.left}px`;
 
@@ -1519,11 +1906,21 @@ fetch(
       loadingTomato.style.width = `${rect.width}px`;
 
       loadingTomato.style.transform = "translate(0,0)";
-    }, 900);
+    }, 480);
 
     setTimeout(() => {
-      document.getElementById("loadingScreen").remove();
-    }, 1000);
+      document.getElementById("loadingScreen")?.remove();
+    }, 1060);
+  })
+  .catch(() => {
+    document.getElementById("loadingScreen")?.remove();
+    catalog.innerHTML =
+      '<div class="catalog-load-error">' +
+        '<div class="catalog-load-error-icon">🍅</div>' +
+        '<strong>Каталог не загрузился</strong>' +
+        '<span>Проверьте интернет и попробуйте ещё раз.</span>' +
+        '<button type="button" onclick="location.reload()">Повторить</button>' +
+      '</div>';
   });
 
 setInterval(() => {
@@ -1540,44 +1937,111 @@ const searchInput = document.getElementById("searchInput");
 
 const clearSearchBtn = document.getElementById("clearSearch");
 
-searchInput.addEventListener("input", () => {
-  let search = searchInput.value.toLowerCase().trim();
+const searchResultCount = document.getElementById("searchResultCount");
 
-  if (search === "🔥") {
-    search = "хит";
-  }
+let searchFrame = 0;
 
-  if (search === "⭐") {
-    search = "новинка";
-  }
+function applyProductSearch() {
+  searchFrame = 0;
 
-  clearSearchBtn.style.display = search ? "block" : "none";
+  let normalizedSearch = normalizeSearchText(searchInput.value);
+
+  if (normalizedSearch === "🔥") normalizedSearch = "хит";
+  if (normalizedSearch === "⭐") normalizedSearch = "новинка";
+
+  const searchVariants = getSearchVariants(normalizedSearch);
+  const numericMatch = normalizedSearch.match(/^(?:#|№)?(\d+)$/);
+
+  clearSearchBtn.style.display = normalizedSearch ? "block" : "none";
+
+  let visibleCount = 0;
 
   document.querySelectorAll(".product").forEach((card) => {
-    const text = card.dataset.search || "";
+    const cardSearch = card.dataset.search || "";
 
-    card.style.display = text.includes(search) ? "" : "none";
+    const matchesSearch = !normalizedSearch
+      ? true
+      : numericMatch
+        ? String(card.dataset.productId) === numericMatch[1]
+        : searchVariants.some((variant) => cardSearch.includes(variant));
+
+    let matchesFilter = true;
+
+    if (activeQuickFilter === "hit") {
+      matchesFilter = card.dataset.isHit === "true";
+    } else if (activeQuickFilter === "new") {
+      matchesFilter = card.dataset.isNew === "true";
+    } else if (activeQuickFilter === "added") {
+      matchesFilter = getCartQuantity(card.dataset.productId) > 0;
+    }
+
+    const visible = matchesSearch && matchesFilter;
+    card.style.display = visible ? "" : "none";
+    if (visible) visibleCount++;
+  });
+
+  const hasActiveSelection = Boolean(normalizedSearch || activeQuickFilter);
+
+  searchResultCount.textContent = hasActiveSelection
+    ? "Найдено: " + formatVarietyCount(visibleCount)
+    : "";
+  searchResultCount.classList.toggle("visible", hasActiveSelection);
+
+  requestAnimationFrame(fitProductTitles);
+}
+
+searchInput.addEventListener("input", () => {
+  if (searchFrame) cancelAnimationFrame(searchFrame);
+  searchFrame = requestAnimationFrame(applyProductSearch);
+});
+
+document.querySelectorAll(".quick-filter").forEach((button) => {
+  button.addEventListener("click", () => {
+    const requestedFilter = button.dataset.filter || "";
+    activeQuickFilter = activeQuickFilter === requestedFilter ? "" : requestedFilter;
+
+    document.querySelectorAll(".quick-filter").forEach((item) => {
+      const isActive = item.dataset.filter === activeQuickFilter;
+      item.classList.toggle("active", isActive);
+      item.setAttribute("aria-pressed", isActive ? "true" : "false");
+    });
+
+    applyProductSearch();
   });
 });
 
 function clearSearch() {
   searchInput.value = "";
 
-  const clearBtn = document.getElementById("clearSearch");
-
-  if (clearBtn) {
-    clearBtn.style.display = "none";
+  if (clearSearchBtn) {
+    clearSearchBtn.style.display = "none";
   }
 
-  document.querySelectorAll(".product").forEach((card) => {
-    card.style.display = "";
-  });
+  applyProductSearch();
 }
 
 clearSearchBtn.addEventListener("click", () => {
   setTimeout(() => {
     clearSearch();
   }, 80);
+});
+
+const backToTopBtn = document.getElementById("backToTopBtn");
+let backToTopFrame = 0;
+
+function updateBackToTopVisibility() {
+  backToTopFrame = 0;
+  backToTopBtn?.classList.toggle("visible", window.scrollY > 700);
+}
+
+window.addEventListener('scroll', () => {
+  if (backToTopFrame) return;
+  backToTopFrame = requestAnimationFrame(updateBackToTopVisibility);
+}, { passive: true });
+
+backToTopBtn?.addEventListener("click", () => {
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  window.scrollTo({ top: 0, behavior: reducedMotion ? "auto" : "smooth" });
 });
 
 setTimeout(() => {
@@ -1593,8 +2057,6 @@ setTimeout(() => {
 }, 6000);
 
 const infoToggle = document.getElementById("infoToggle");
-
-const infoPopup = document.getElementById("infoPopup");
 
 infoToggle.addEventListener("click", () => {
   vibrate(15);
@@ -1618,10 +2080,6 @@ infoToggle.addEventListener("click", () => {
   fly.style.width = start.width + "px";
 
   fly.style.height = start.height + "px";
-
-  fly.src = "./tomato/info-popup.png";
-
-  fly.className = "info-fly";
 
   const closeBtn = document.createElement("div");
 
@@ -1685,10 +2143,6 @@ infoToggle.addEventListener("click", () => {
     e.stopPropagation();
   });
 
-  fly.addEventListener("click", (e) => {
-    e.stopPropagation();
-  });
-
   requestAnimationFrame(() => {
     const finalWidth = Math.min(window.innerWidth * 0.92, 420);
 
@@ -1724,6 +2178,13 @@ function showToast(text) {
     toast.classList.remove("show");
   }, 3000);
 }
+
+document.getElementById("copyOrderIdBtn").onclick = async () => {
+  if (!lastOrderId) return;
+
+  await navigator.clipboard.writeText(lastOrderId);
+  showToast("📋 Номер заказа скопирован");
+};
 
 document.getElementById("copyPhoneBtn").onclick = async () => {
   await navigator.clipboard.writeText("+79991210877");
@@ -1763,6 +2224,8 @@ document.getElementById("addonOrderBtn").onclick = () => {
   orderMode = "addon";
 
   if (clientOrders.length <= 1) {
+    selectedOrderId = clientOrders[0]?.orderId || null;
+    selectedOrderColumn = clientOrders[0]?.column || null;
     document.getElementById("clientModal").style.display = "none";
 
     submitOrder();
@@ -1793,15 +2256,19 @@ function showOrderSelectModal() {
 
     const parts = order.header.split("  ");
 
-    const title = parts[3] || "Свой заказ";
+    const title = order.title || parts[3] || "Свой заказ";
 
-    const label = parts[4] || "";
+    const label = order.label || "";
+
+    const orderIdText = order.orderId
+      ? " • " + order.orderId
+      : "";
 
     card.innerHTML = `
 
       <div class="order-select-top">
 
-        <div>${title}</div>
+        <div>${escapeHtml(title)}${escapeHtml(orderIdText)}</div>
 
         <div class="order-select-qty">
           ${order.totalQty} п
@@ -1809,12 +2276,13 @@ function showOrderSelectModal() {
 
       </div>
 
-      ${label ? `<div class="order-select-label">${label}</div>` : ""}
+      ${label ? `<div class="order-select-label">${escapeHtml(label)}</div>` : ""}
 
     `;
 
     card.onclick = () => {
       selectedOrderColumn = order.column;
+      selectedOrderId = order.orderId || null;
 
       document.getElementById("orderSelectModal").style.display = "none";
 
@@ -1830,68 +2298,6 @@ function showOrderSelectModal() {
   lockBody();
 }
 
-document.getElementById("hitFilter")?.addEventListener("click", () => {
-  searchInput.value = "хит";
-
-  searchInput.dispatchEvent(new Event("input"));
-});
-
-document.getElementById("newFilter")?.addEventListener("click", () => {
-  searchInput.value = "новинка";
-
-  searchInput.dispatchEvent(new Event("input"));
-});
-
-const hints = document.getElementById("searchHints");
-
-let hintsOpened = false;
-
-/* показать / скрыть по нажатию */
-
-searchInput.addEventListener("click", (e) => {
-  e.stopPropagation();
-
-  if (hintsOpened) {
-    hints.style.display = "none";
-    hintsOpened = false;
-  } else {
-    hints.style.display = "block";
-    hintsOpened = true;
-  }
-});
-
-/* начал печатать -> скрыть */
-
-searchInput.addEventListener("input", () => {
-  hints.style.display = "none";
-  hintsOpened = false;
-});
-
-/* клик вне поиска -> скрыть */
-
-document.addEventListener("click", (e) => {
-  if (!e.target.closest(".search-box") && !e.target.closest("#searchHints")) {
-    hints.style.display = "none";
-    hintsOpened = false;
-  }
-});
-
-document.querySelectorAll(".search-hint").forEach((item) => {
-  item.addEventListener("click", () => {
-    if (item.dataset.search === "хит") {
-      searchInput.value = "🔥";
-    } else if (item.dataset.search === "новинка") {
-      searchInput.value = "⭐";
-    } else {
-      searchInput.value = item.dataset.search;
-    }
-
-    searchInput.dispatchEvent(new Event("input"));
-
-    hints.style.display = "none";
-  });
-});
-
 document.getElementById("cartBackBtn").onclick = () => {
   cartBox.classList.add("modal-hide");
 
@@ -1901,6 +2307,14 @@ document.getElementById("cartBackBtn").onclick = () => {
     unlockBody();
 
     cartBox.classList.remove("modal-hide");
+
+    const savedPosition = Number(
+      sessionStorage.getItem("tomatoCatalogScroll") || catalogScrollPosition,
+    );
+
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: savedPosition, behavior: "auto" });
+    });
   }, 200);
 };
 
@@ -1920,12 +2334,23 @@ document.getElementById("checkoutBackBtn").onclick = () => {
 
 };
 
-const pendingSheet = localStorage.getItem("pendingSheet");
+let pendingSheetData = null;
 
-if (pendingSheet) {
-  const data = JSON.parse(pendingSheet);
+try {
+  const pendingSheet = localStorage.getItem("pendingSheet");
+  pendingSheetData = pendingSheet ? JSON.parse(pendingSheet) : null;
+} catch (error) {
+  localStorage.removeItem("pendingSheet");
+}
+
+if (pendingSheetData) {
+  const data = pendingSheetData;
 
   document.getElementById("sheetTitle").textContent = data.title;
+  lastOrderId = data.orderId || "";
+  const copyOrderIdBtn = document.getElementById("copyOrderIdBtn");
+  copyOrderIdBtn.style.display = lastOrderId ? "inline-flex" : "none";
+  copyOrderIdBtn.textContent = lastOrderId ? "Скопировать " + lastOrderId : "Скопировать номер";
 
   document.getElementById("sheetDate").innerHTML = data.date;
 
@@ -1943,11 +2368,11 @@ if (pendingSheet) {
       return `
         <div class="sheet-chip">
           <span class="sheet-name">
-            ${item.id} ${shortTitle}
+            ${escapeHtml(item.id)} ${escapeHtml(shortTitle)}
           </span>
 
           <span class="sheet-qty">
-            ${item.qty}п
+            ${Number(item.qty) || 0}п
           </span>
         </div>
       `;
@@ -1982,7 +2407,13 @@ if (pendingSheet) {
 
   document.body.appendChild(sandbox);
 
-  html2canvas(clone, {
+  if (typeof window.html2canvas !== "function") {
+    sandbox.remove();
+    showToast("Карточку заказа не удалось подготовить" );
+    return;
+  }
+
+  window.html2canvas(clone, {
     scale: 2,
     useCORS: false,
     imageTimeout: 0,
