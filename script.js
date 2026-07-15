@@ -400,7 +400,6 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
     card.querySelector(".plus").addEventListener("click", (e) => {
       e.stopPropagation();
       press(e.currentTarget);
-      press(card);
       vibrate(15);
 
       if (qtyAnimating) return;
@@ -450,7 +449,6 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
     card.querySelector(".minus").addEventListener("click", (e) => {
       e.stopPropagation();
       press(e.currentTarget);
-      press(card);
       vibrate(15);
       if (qtyAnimating) return;
 
@@ -510,10 +508,8 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
     card.querySelector(".add-btn").addEventListener("click", (e) => {
       e.stopPropagation();
       press(e.currentTarget);
-      press(card);
       const cartQty = getCartQuantity(product.id);
       addToCart(product, cartQty > 0 ? 1 : qty);
-      animateAddedCard(card);
       vibrate(15);
     });
 
@@ -564,18 +560,6 @@ if (img) {
 }
 
 /* ADD TO CART */
-
-function animateAddedCard(card) {
-  if (!card) return;
-
-  card.classList.remove("cart-add-pulse");
-  void card.offsetWidth;
-  card.classList.add("cart-add-pulse");
-
-  setTimeout(() => {
-    card.classList.remove("cart-add-pulse");
-  }, 420);
-}
 
 function addToCart(product, qty) {
   const existing = cart.find((item) => {
@@ -2466,3 +2450,5 @@ document.addEventListener("click", (e) => {
 
   press(btn);
 });
+
+
