@@ -28,12 +28,12 @@
 
   <link
     rel="stylesheet"
-    href="style.css?v=12"
+    href="style.css?v=17"
   />
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fira+Sans:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet">
 
 <meta property="og:title"
 content="Каталог семян томатов">
@@ -75,14 +75,17 @@ content="summary_large_image">
 
 
 </head>
-<div id="toast" class="toast"></div>
 <body>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <div id="loadingScreen">
 
   <img
   id="loadingTomato"
   src="./tomato/tomato-breath.png"
+  decoding="async"
+  fetchpriority="high"
+  alt=""
 >
 <div class="loading-text">
   Подготавливаем каталог томатов...
@@ -104,6 +107,10 @@ content="summary_large_image">
         src="./tomato/tomato-idle.png"
         class="logo-tomato"
         id="logoTomato"
+        width="46"
+        height="46"
+        decoding="async"
+        alt=""
       />
 
       <div id="tomatoHearts"></div>
@@ -140,10 +147,18 @@ content="summary_large_image">
 
   <div class="search-box">
 
-    <img
-      src="./tomato/search.png"
+    <svg
       class="search-icon"
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
     >
+      <circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2.4" />
+      <path d="M15.4 15.4L21 21" fill="none" stroke="currentColor" stroke-width="2.7" stroke-linecap="round" />
+      <path d="M8.4 4.3c.8-1.3 2-1.9 3.4-2" fill="none" stroke="#0e8f6c" stroke-width="1.8" stroke-linecap="round" />
+    </svg>
 
     <input
       type="text"
@@ -158,38 +173,32 @@ content="summary_large_image">
 </span>
   </div>
 
- <div id="searchHints" class="search-hints">
-
-  <div
-    class="search-hint"
-    data-search="хит"
-  >
-    🔥 Хиты
-  </div>
-
-  <div
-    class="search-hint"
-    data-search="новинка"
-  >
-    ⭐ Новинки
-  </div>
-
-</div>
-
   <img
-    src="./tomato/info.png"
+    data-src="./tomato/info.png"
     id="infoToggle"
     class="info-tag"
-    alt="Важно"
+    width="69"
+    height="40"
+    alt="Важная информация"
+    decoding="async"
   >
 
 
 </div>
 
+<div class="quick-filters" id="quickFilters" aria-label="Быстрые фильтры">
+  <button type="button" class="quick-filter" data-filter="hit" aria-pressed="false">🔥 Хиты</button>
+  <button type="button" class="quick-filter" data-filter="new" aria-pressed="false">⭐ Новинки</button>
+  <button type="button" class="quick-filter" data-filter="added" aria-pressed="false">✓ Добавленные</button>
+</div>
+
+<div
+  id="searchResultCount"
+  class="search-result-count"
+  aria-live="polite"
+></div>
 
   </div>
-
-
 
 </div>
 
@@ -209,6 +218,8 @@ content="summary_large_image">
   <img
     src="./tomato/season-end.png"
     alt="Томатик"
+    loading="lazy"
+    decoding="async"
   >
 
   <h2>
@@ -408,6 +419,9 @@ content="summary_large_image">
   placeholder="Адрес ПВЗ"
   style="display:none"
 />
+  <div id="orderSubmitError" class="order-submit-error" role="alert" hidden>
+    Google временно не ответил. Корзина сохранена — нажмите «Повторить».
+  </div>
   <button id="createOrderBtn">
     Создать заказ
   </button>
@@ -452,6 +466,8 @@ content="summary_large_image">
 
   <img
     src="tomato/newbtn.png"
+    loading="lazy"
+    decoding="async"
     class="btn-icon"
   >
 
@@ -474,6 +490,8 @@ content="summary_large_image">
 
   <img
     src="tomato/reorder.png"
+    loading="lazy"
+    decoding="async"
     class="btn-icon"
   >
 
@@ -624,6 +642,16 @@ content="summary_large_image">
   id="sheetOrderLabel"
 ></div>
 
+<button
+  type="button"
+  id="copyOrderIdBtn"
+  class="copy-order-id"
+  data-html2canvas-ignore="true"
+  style="display:none"
+>
+  Скопировать номер
+</button>
+
     </div>
 
     <div
@@ -684,6 +712,8 @@ content="summary_large_image">
 
      <img
       src="./tomato/copy-contact.png"
+    loading="lazy"
+    decoding="async"
       alt="Скопировать номер"
     >
   
@@ -698,6 +728,8 @@ content="summary_large_image">
     <img
   id="saveBtn"
   src="./tomato/send-card.png"
+    loading="lazy"
+    decoding="async"
   class="sheet-action-btn"
 >
 
@@ -766,24 +798,18 @@ content="summary_large_image">
 
 </div> <!-- app -->
 
-<div id="infoPopup" class="info-popup">
-
-  <img
-    src="./tomato/info-popup.png"
-    class="info-popup-img"
-    alt="Важно"
-  >
-
-</div>
-
 
 
 <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
-<script src="script.js"></script>
+<button id="backToTopBtn" class="back-to-top" type="button" aria-label="Вернуться наверх">↑</button>
+
+<script src="script.js?v=17"></script>
 
 </body>
 
 </html>
+
+
