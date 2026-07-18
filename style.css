@@ -828,7 +828,7 @@ body {
 }
 
 .product.pressed {
-  transform: scale(0.99) translateY(1.4px);
+  transform: scale(0.98) translateY(1.4px);
 
   box-shadow:
     0 6px 18px rgba(0,0,0,.10),
@@ -975,13 +975,15 @@ body {
 }
 
 .product-price {
-  font-size: 22px;
+  font-size: 24px;
 
   font-weight: 600;
 
   text-align: center;
 
-  transform: translateX(6px);
+  transform: translateX(8px);
+
+  margin-left: 12px;
 
   letter-spacing: 0.01px;
 
