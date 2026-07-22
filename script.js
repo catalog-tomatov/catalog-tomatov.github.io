@@ -6,6 +6,34 @@ function vibrate(ms = 20) {
 
 let products = [];
 
+const CATALOG_API_URL =
+  "https://script.google.com/macros/s/AKfycbwAIYzIGkeGriT_B4Z1M58oK1xqexMiyDpE4eGnQTTQt-CeJwbeh_vkqXMXipE1END2/exec";
+
+const SAVED_ORDERS_KEY = "savedOrders";
+const SAVED_ORDERS_LIMIT = 10;
+const ORDER_DRAFT_KEY = "tomatoOrderDraft";
+const PENDING_ORDER_REQUEST_KEY = "tomatoPendingOrderRequest";
+const RESET_VERSION_KEY = "tomatoResetVersion";
+const RESET_DATE = new Date("2027-05-01T00:00:00+03:00").getTime();
+const RESET_VERSION = "2027-05-01";
+
+function runScheduledStorageReset(now = Date.now()) {
+  if (now < RESET_DATE) return false;
+  if (localStorage.getItem(RESET_VERSION_KEY) === RESET_VERSION) return false;
+
+  [
+    SAVED_ORDERS_KEY,
+    "tomatoCart",
+    ORDER_DRAFT_KEY,
+    "pendingSheet",
+    PENDING_ORDER_REQUEST_KEY,
+  ].forEach((key) => localStorage.removeItem(key));
+
+  localStorage.setItem(RESET_VERSION_KEY, RESET_VERSION);
+  return true;
+}
+
+runScheduledStorageReset();
 let tomatoLevel = 0;
 
 let tomatoClicks = 0;
@@ -77,6 +105,179 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+function loadSavedOrders() {
+  try {
+    const value = JSON.parse(localStorage.getItem(SAVED_ORDERS_KEY) || "[]");
+    if (!Array.isArray(value)) return [];
+
+    return value
+      .filter((order) => order && order.orderId && Array.isArray(order.items))
+      .slice(0, SAVED_ORDERS_LIMIT);
+  } catch (error) {
+    localStorage.removeItem(SAVED_ORDERS_KEY);
+    return [];
+  }
+}
+
+let savedOrders = loadSavedOrders();
+
+function persistSavedOrders() {
+  localStorage.setItem(
+    SAVED_ORDERS_KEY,
+    JSON.stringify(savedOrders.slice(0, SAVED_ORDERS_LIMIT)),
+  );
+}
+
+function mergeSavedOrderItems(currentItems, addedItems) {
+  const merged = new Map();
+
+  [...currentItems, ...addedItems].forEach((item) => {
+    const key = String(item.id);
+    const previous = merged.get(key);
+
+    if (previous) {
+      previous.qty += Number(item.qty) || 0;
+      if (item.title) previous.title = item.title;
+      if (Number.isFinite(Number(item.price))) previous.price = Number(item.price);
+    } else {
+      merged.set(key, {
+        id: item.id,
+        title: String(item.title || ""),
+        price: Number(item.price) || 0,
+        qty: Number(item.qty) || 0,
+      });
+    }
+  });
+
+  return Array.from(merged.values()).filter((item) => item.qty > 0);
+}
+
+function saveOrderSnapshot(snapshot) {
+  const orderId = String(snapshot.orderId || "").trim();
+  if (!orderId) return;
+
+  const requestId = String(snapshot.clientRequestId || "").trim();
+  const existingIndex = savedOrders.findIndex(
+    (order) => String(order.orderId) === orderId,
+  );
+
+  let nextOrder = {
+    schemaVersion: 1,
+    orderId,
+    title: String(snapshot.title || "ЗАКАЗ " + orderId),
+    mode: snapshot.mode === "addon" ? "addon" : "normal",
+    orderLabel: String(snapshot.orderLabel || ""),
+    name: String(snapshot.name || ""),
+    phone: String(snapshot.phone || ""),
+    pickup: String(snapshot.pickup || ""),
+    createdAt: snapshot.createdAt || new Date().toISOString(),
+    dateLabel: String(snapshot.dateLabel || ""),
+    total: Number(snapshot.total) || 0,
+    totalItems: Number(snapshot.totalItems) || 0,
+    items: (snapshot.items || []).map((item) => ({
+      id: item.id,
+      title: String(item.title || ""),
+      price: Number(item.price) || 0,
+      qty: Number(item.qty) || 0,
+    })),
+    requestIds: requestId ? [requestId] : [],
+  };
+
+  if (existingIndex !== -1) {
+    const existing = savedOrders[existingIndex];
+    const requestIds = Array.isArray(existing.requestIds)
+      ? existing.requestIds.map(String)
+      : [];
+
+    if (requestId && requestIds.includes(requestId)) return;
+
+    if (nextOrder.mode === "addon") {
+      nextOrder = {
+        ...existing,
+        ...nextOrder,
+        title: existing.title || "ЗАКАЗ " + orderId,
+        total: (Number(existing.total) || 0) + nextOrder.total,
+        totalItems: (Number(existing.totalItems) || 0) + nextOrder.totalItems,
+        items: mergeSavedOrderItems(existing.items || [], nextOrder.items),
+        requestIds: requestId
+          ? Array.from(new Set([...requestIds, requestId]))
+          : requestIds,
+      };
+    }
+
+    savedOrders.splice(existingIndex, 1);
+  }
+
+  savedOrders.unshift(nextOrder);
+  savedOrders = savedOrders.slice(0, SAVED_ORDERS_LIMIT);
+  persistSavedOrders();
+  renderSavedOrdersSummary();
+}
+
+function createClientRequestId() {
+  if (window.crypto && typeof window.crypto.randomUUID === "function") {
+    return window.crypto.randomUUID();
+  }
+
+  return (
+    Date.now().toString(36) +
+    "-" +
+    Math.random().toString(36).slice(2) +
+    "-" +
+    Math.random().toString(36).slice(2)
+  );
+}
+
+function getOrderRequestSignature(payload) {
+  return JSON.stringify({
+    name: payload.name,
+    phone: payload.phone,
+    pickup: payload.pickup,
+    mode: payload.mode,
+    selectedOrderId: payload.selectedOrderId || "",
+    orderLabel: payload.orderLabel || "",
+    items: (payload.items || [])
+      .map((item) => ({ id: String(item.id), qty: Number(item.qty) || 0 }))
+      .sort((a, b) => a.id.localeCompare(b.id, "ru", { numeric: true })),
+  });
+}
+
+function getOrCreateClientRequestId(payload) {
+  const signature = getOrderRequestSignature(payload);
+
+  try {
+    const pending = JSON.parse(
+      localStorage.getItem(PENDING_ORDER_REQUEST_KEY) || "null",
+    );
+
+    if (pending && pending.id && pending.signature === signature) {
+      return String(pending.id);
+    }
+  } catch (error) {
+    localStorage.removeItem(PENDING_ORDER_REQUEST_KEY);
+  }
+
+  const id = createClientRequestId();
+  localStorage.setItem(
+    PENDING_ORDER_REQUEST_KEY,
+    JSON.stringify({ id, signature, createdAt: new Date().toISOString() }),
+  );
+  return id;
+}
+
+function clearClientRequestId(requestId) {
+  try {
+    const pending = JSON.parse(
+      localStorage.getItem(PENDING_ORDER_REQUEST_KEY) || "null",
+    );
+
+    if (!pending || String(pending.id) === String(requestId)) {
+      localStorage.removeItem(PENDING_ORDER_REQUEST_KEY);
+    }
+  } catch (error) {
+    localStorage.removeItem(PENDING_ORDER_REQUEST_KEY);
+  }
+}
 async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 12000) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -121,6 +322,41 @@ const checkoutBox = document.querySelector(".checkout-box");
 
 const sheetBox = document.querySelector(".sheet-box");
 
+function isSeasonClosedResponse(data) {
+  return Boolean(
+    data &&
+      !Array.isArray(data) &&
+      (data.seasonClosed === true ||
+        data.code === "SEASON_CLOSED" ||
+        data.status === "season_closed"),
+  );
+}
+
+function showCatalogSeasonClosed(fromSubmission = false) {
+  document.getElementById("catalog").style.display = "none";
+  document.getElementById("catalogClosed").style.display = "block";
+  document.getElementById("loadingScreen")?.remove();
+  document.querySelector(".header")?.classList.add("season-closed");
+  document.getElementById("loadingBlocker")?.remove();
+
+  [
+    "cartModal",
+    "checkoutModal",
+    "clientModal",
+    "orderSelectModal",
+    "orderLabelModal",
+  ].forEach((id) => {
+    const modal = document.getElementById(id);
+    if (modal) modal.style.display = "none";
+  });
+
+  orderSending = false;
+  unlockBody();
+
+  if (fromSubmission) {
+    showToast("Сезон закрыт. Заказ не был отправлен");
+  }
+}
 /* CART */
 
 let cart = [];
@@ -257,6 +493,38 @@ window.addEventListener("resize", () => {
   }, 100);
 });
 
+function waitForInitialProductImages(limit = 8, timeoutMs = 1600) {
+  const images = Array.from(
+    document.querySelectorAll(".product-image img"),
+  ).slice(0, limit);
+
+  if (!images.length) return Promise.resolve();
+
+  const waitForImage = (image) => {
+    const decodeImage = () => {
+      if (typeof image.decode !== "function") return Promise.resolve();
+      return image.decode().catch(() => undefined);
+    };
+
+    if (image.complete) return decodeImage();
+
+    return new Promise((resolve) => {
+      const finish = () => {
+        image.removeEventListener("load", finish);
+        image.removeEventListener("error", finish);
+        resolve();
+      };
+
+      image.addEventListener("load", finish, { once: true });
+      image.addEventListener("error", finish, { once: true });
+    }).then(decodeImage);
+  };
+
+  return Promise.race([
+    Promise.all(images.map(waitForImage)),
+    new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
+}
 function renderProducts() {
   catalog.innerHTML = "";
 
@@ -541,15 +809,32 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
         product.description;
     });
 
-    const img = card.querySelector('.product-image img');
-if (img) {
-  // Если изображение уже загружено (кеш)
-  if (img.complete) {
-    img.classList.add('loaded');
-  } else {
-    img.onload = () => img.classList.add('loaded');
-  }
-}
+    const img = card.querySelector(".product-image img");
+    const imageBox = card.querySelector(".product-image");
+
+    if (img && imageBox) {
+      const showImage = () => {
+        imageBox.classList.remove("image-failed");
+        imageBox.classList.add("image-ready");
+        img.classList.add("loaded");
+      };
+      const showImageFallback = () => {
+        img.classList.remove("loaded");
+        imageBox.classList.remove("image-ready");
+        imageBox.classList.add("image-failed");
+      };
+
+      if (img.complete) {
+        if (img.naturalWidth > 0) {
+          showImage();
+        } else {
+          showImageFallback();
+        }
+      } else {
+        img.addEventListener("load", showImage, { once: true });
+        img.addEventListener("error", showImageFallback, { once: true });
+      }
+    }
 
     fragment.appendChild(card);
   });
@@ -819,44 +1104,43 @@ document.body.appendChild(blocker);
   pickupText = foundClient.pickup;
 }
 
-  const totalPrice = cart.reduce((sum, item) => {
+  const submittedItems = cart.map((item) => ({
+    id: item.id,
+    title: item.title,
+    price: Number(item.price) || 0,
+    qty: Number(item.qty) || 0,
+  }));
+
+  const totalPrice = submittedItems.reduce((sum, item) => {
     return sum + item.price * item.qty;
   }, 0);
 
-  const totalItems = cart.reduce((sum, item) => {
+  const totalItems = submittedItems.reduce((sum, item) => {
     return sum + item.qty;
   }, 0);
 
+  const orderPayload = {
+    name,
+    phone,
+    pickup: pickupText,
+    mode: orderMode,
+    selectedOrderColumn,
+    selectedOrderId,
+    orderLabel,
+    items: submittedItems.map((item) => ({
+      id: item.id,
+      qty: item.qty,
+    })),
+    total: totalPrice,
+  };
 
-  fetch(
-    "https://script.google.com/macros/s/AKfycbwAIYzIGkeGriT_B4Z1M58oK1xqexMiyDpE4eGnQTTQt-CeJwbeh_vkqXMXipE1END2/exec",
-    {
-      method: "POST",
+  const clientRequestId = getOrCreateClientRequestId(orderPayload);
+  orderPayload.clientRequestId = clientRequestId;
 
-      body: JSON.stringify({
-        name: name,
-
-        phone: phone,
-
-        pickup: pickupText,
-
-        mode: orderMode,
-
-        selectedOrderColumn: selectedOrderColumn,
-
-        selectedOrderId: selectedOrderId,
-
-        orderLabel: orderLabel,
-
-        items: cart.map((item) => ({
-          id: item.id,
-          qty: item.qty,
-        })),
-
-        total: totalPrice,
-      }),
-    },
-  )
+  fetch(CATALOG_API_URL, {
+    method: "POST",
+    body: JSON.stringify(orderPayload),
+  })
     .then((res) => {
       if (!res.ok) {
         throw new Error("HTTP " + res.status);
@@ -865,8 +1149,18 @@ document.body.appendChild(blocker);
       return res.json();
     })
     .then((result) => {
-      if (!result.success || !result.orderId) {
-        throw new Error("Сервер не вернул номер заказа");
+      if (isSeasonClosedResponse(result)) {
+        const seasonError = new Error("Сезон закрыт");
+        seasonError.code = "SEASON_CLOSED";
+        throw seasonError;
+      }
+
+      if (!result || !result.success || !result.orderId) {
+        throw new Error(
+          result && result.error
+            ? String(result.error)
+            : "Сервер не вернул номер заказа",
+        );
       }
 
       const orderId = result.orderId;
@@ -914,6 +1208,29 @@ document.body.appendChild(blocker);
         `${confirmedTotalPrice.toLocaleString("ru-RU")} ₽`;
 
       document.getElementById("sheetTotalItems").innerHTML = `${totalItems} п`;
+
+      try {
+        saveOrderSnapshot({
+          orderId,
+          title: document.getElementById("sheetTitle").textContent,
+          mode: orderMode,
+          orderLabel,
+          name,
+          phone,
+          pickup: pickupText,
+          createdAt: today.toISOString(),
+          dateLabel: today.toLocaleDateString("ru-RU"),
+          total: confirmedTotalPrice,
+          totalItems,
+          items: submittedItems,
+          clientRequestId,
+        });
+      } catch (storageError) {
+        console.error("Не удалось сохранить локальную копию заказа", storageError);
+      } finally {
+        clearClientRequestId(clientRequestId);
+      }
+
       localStorage.removeItem(ORDER_DRAFT_KEY);
 
       localStorage.setItem(
@@ -932,7 +1249,7 @@ document.body.appendChild(blocker);
           total: `${confirmedTotalPrice.toLocaleString("ru-RU")} ₽`,
           totalItems: `${totalItems} п`,
           orderId: orderId,
-          items: cart,
+          items: submittedItems,
         }),
       );
 
@@ -986,6 +1303,9 @@ document.body.appendChild(blocker);
 
        localStorage.removeItem("tomatoCart");
 
+        savedSheetMode = false;
+        document.getElementById("savedSheetActions").hidden = true;
+        document.querySelector(".sheet-message").style.display = "block";
         document.querySelector(".sheet-buttons").style.display = "flex";
 
         document.body.style.overflow = "hidden";
@@ -1020,66 +1340,23 @@ document.body.appendChild(blocker);
             }
           })();
         }
-        setTimeout(() => {
-          document.querySelectorAll("canvas").forEach((c) => c.remove());
-          const original = document.getElementById("sheetBox");
-
-          const clone = original.cloneNode(true);
-
-          clone.querySelectorAll("img").forEach((img) => {
-            img.remove();
+        const pngToken = ++sheetGenerationToken;
+        createSheetPngFile({
+          orderId,
+          delayMs: 1800,
+          token: pngToken,
+        })
+          .then((file) => {
+            if (!file || pngToken !== sheetGenerationToken) return;
+            generatedFile = file;
+            document.getElementById("saveBtn").style.display = "flex";
+          })
+          .catch((error) => {
+            console.error("Не удалось подготовить карточку заказа", error);
+            if (pngToken === sheetGenerationToken) {
+              showToast("Заказ создан, но карточку не удалось подготовить");
+            }
           });
-
-          clone.style.borderRadius = "28px";
-          clone.style.overflow = "hidden";
-
-          clone.style.maxHeight = "none";
-          
-
-          const cloneItems = clone.querySelector("#sheetItems");
-
-          if (cloneItems) {
-            cloneItems.style.maxHeight = "none";
-            cloneItems.style.overflow = "visible";
-          }
-
-          const sandbox = document.createElement("div");
-
-          sandbox.style.position = "fixed";
-          sandbox.style.left = "-99999px";
-          sandbox.style.top = "0";
-
-          sandbox.appendChild(clone);
-
-          document.body.appendChild(sandbox);
-
-          clone.querySelectorAll("*").forEach((el) => {
-            el.style.backgroundImage = "none";
-          });
-
-          if (typeof window.html2canvas !== "function") {
-            sandbox.remove();
-            showToast("Заказ создан, но карточку не удалось подготовить" );
-            return;
-          }
-
-          window.html2canvas(clone, {
-            scale: 2,
-            useCORS: false,
-            imageTimeout: 0,
-            backgroundColor: null,
-          }).then((canvas) => {
-            sandbox.remove();
-
-            canvas.toBlob((blob) => {
-              generatedFile = new File([blob], "order-" + orderId + ".png", {
-                type: "image/png",
-              });
-
-              document.getElementById("saveBtn").style.display = "flex";
-            }, "image/png");
-          });
-        }, 1800);
       }, 900);
     })
 
@@ -1087,6 +1364,11 @@ document.body.appendChild(blocker);
 
       console.error("Не удалось создать заказ", err);
       document.getElementById("loadingBlocker")?.remove();
+
+      if (err && err.code === "SEASON_CLOSED") {
+        showCatalogSeasonClosed(true);
+        return;
+      }
 
       orderSending = false;
 
@@ -1191,11 +1473,16 @@ document.getElementById("createOrderBtn").onclick = async () => {
 
   try {
     const data = await fetchJsonWithTimeout(
-      "https://script.google.com/macros/s/AKfycbwAIYzIGkeGriT_B4Z1M58oK1xqexMiyDpE4eGnQTTQt-CeJwbeh_vkqXMXipE1END2/exec?phone=" +
+      CATALOG_API_URL + "?phone=" +
         encodeURIComponent(phone),
       {},
       10000,
     );
+
+    if (isSeasonClosedResponse(data)) {
+      showCatalogSeasonClosed(true);
+      return;
+    }
 
     if (data.found || data["Найдено"]) {
       orderSending = false;
@@ -1411,8 +1698,350 @@ let cardDownloaded = false;
 let generatedFile = null;
 
 let lastOrderId = "";
+let savedSheetMode = false;
+let sheetGenerationToken = 0;
+const sheetPngCache = new Map();
+const SHEET_PNG_CACHE_LIMIT = 3;
 
-const ORDER_DRAFT_KEY = "tomatoOrderDraft";
+function getSavedOrderPngCacheKey(order) {
+  const requestIds = Array.isArray(order?.requestIds)
+    ? order.requestIds.join(",")
+    : "";
+
+  return [
+    order?.orderId || "",
+    order?.createdAt || "",
+    Number(order?.total) || 0,
+    Number(order?.totalItems) || 0,
+    requestIds,
+  ].join("|");
+}
+
+function getCachedSheetPng(cacheKey) {
+  if (!cacheKey || !sheetPngCache.has(cacheKey)) return null;
+
+  const file = sheetPngCache.get(cacheKey);
+  sheetPngCache.delete(cacheKey);
+  sheetPngCache.set(cacheKey, file);
+  return file;
+}
+
+function cacheSheetPng(cacheKey, file) {
+  if (!cacheKey || !file) return;
+
+  sheetPngCache.delete(cacheKey);
+  sheetPngCache.set(cacheKey, file);
+
+  while (sheetPngCache.size > SHEET_PNG_CACHE_LIMIT) {
+    const oldestKey = sheetPngCache.keys().next().value;
+    sheetPngCache.delete(oldestKey);
+  }
+}
+
+async function createSheetPngFile({
+  orderId,
+  cacheKey = "",
+  delayMs = 0,
+  token = sheetGenerationToken,
+}) {
+  const cachedFile = getCachedSheetPng(cacheKey);
+  if (cachedFile) return cachedFile;
+
+  if (delayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  if (token !== sheetGenerationToken) return null;
+  if (typeof window.html2canvas !== "function") {
+    throw new Error("html2canvas недоступен");
+  }
+
+  const original = document.getElementById("sheetBox");
+  if (!original) throw new Error("Карточка заказа не найдена");
+
+  document.querySelectorAll("canvas").forEach((canvas) => canvas.remove());
+
+  const clone = original.cloneNode(true);
+  clone
+    .querySelectorAll('img, [data-html2canvas-ignore="true"]')
+    .forEach((element) => element.remove());
+  clone.style.borderRadius = "28px";
+  clone.style.overflow = "hidden";
+  clone.style.maxHeight = "none";
+
+  const cloneItems = clone.querySelector("#sheetItems");
+  if (cloneItems) {
+    cloneItems.style.maxHeight = "none";
+    cloneItems.style.overflow = "visible";
+  }
+
+  clone.querySelectorAll("*").forEach((element) => {
+    element.style.backgroundImage = "none";
+  });
+
+  const sandbox = document.createElement("div");
+  sandbox.style.position = "fixed";
+  sandbox.style.left = "-99999px";
+  sandbox.style.top = "0";
+  sandbox.appendChild(clone);
+  document.body.appendChild(sandbox);
+
+  try {
+    if (token !== sheetGenerationToken) return null;
+
+    const canvas = await window.html2canvas(clone, {
+      scale: 2,
+      useCORS: false,
+      imageTimeout: 0,
+      backgroundColor: null,
+      logging: false,
+    });
+
+    if (token !== sheetGenerationToken) return null;
+
+    const blob = await new Promise((resolve) =>
+      canvas.toBlob(resolve, "image/png"),
+    );
+    if (!blob) throw new Error("Не удалось создать PNG");
+    if (token !== sheetGenerationToken) return null;
+
+    const safeOrderId = String(orderId || "order").replace(
+      /[^0-9A-Za-zА-Яа-я_-]/g,
+      "",
+    );
+    const file = new File([blob], `order-${safeOrderId || "order"}.png`, {
+      type: "image/png",
+    });
+    cacheSheetPng(cacheKey, file);
+    return file;
+  } finally {
+    sandbox.remove();
+  }
+}
+
+function renderSavedOrdersSummary() {
+  const banner = document.getElementById("savedOrdersBanner");
+  const count = document.getElementById("savedOrdersCount");
+  if (!banner || !count) return;
+
+  count.textContent = String(savedOrders.length);
+  banner.hidden = savedOrders.length === 0;
+}
+
+function getSavedOrderDate(order) {
+  if (order.dateLabel) return order.dateLabel;
+
+  const date = new Date(order.createdAt);
+  return Number.isNaN(date.getTime())
+    ? "Дата не указана"
+    : date.toLocaleDateString("ru-RU");
+}
+
+function renderSavedOrdersList() {
+  const list = document.getElementById("savedOrdersList");
+  if (!list) return;
+
+  list.innerHTML = "";
+
+  savedOrders.forEach((order) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "saved-order-row";
+
+    const main = document.createElement("span");
+    main.className = "saved-order-row-main";
+
+    const title = document.createElement("span");
+    title.className = "saved-order-row-title";
+    title.textContent = `${order.orderId} · ${order.name || "Без имени"}`;
+
+    const total = document.createElement("span");
+    total.className = "saved-order-row-total";
+    total.textContent = `${(Number(order.total) || 0).toLocaleString("ru-RU")} ₽`;
+
+    const date = document.createElement("span");
+    date.className = "saved-order-row-date";
+    date.textContent = getSavedOrderDate(order);
+
+    main.append(title, total);
+    row.append(main, date);
+    row.addEventListener("click", () => {
+      if (row.disabled) return;
+      row.disabled = true;
+      row.classList.add("saved-orders-pressed");
+      setTimeout(() => openSavedOrderCard(order), 110);
+    });
+    list.appendChild(row);
+  });
+}
+
+function openSavedOrders() {
+  renderSavedOrdersList();
+  const modal = document.getElementById("savedOrdersModal");
+  modal.style.display = "flex";
+  modal.setAttribute("aria-hidden", "false");
+  lockBody();
+}
+
+function closeSavedOrders() {
+  const modal = document.getElementById("savedOrdersModal");
+  modal.style.display = "none";
+  modal.setAttribute("aria-hidden", "true");
+  unlockBody();
+}
+
+function fillSheetItems(items) {
+  sheetItems.innerHTML = (items || [])
+    .map((item) => {
+      const title = String(item.title || "");
+      const shortTitle = title.length > 14 ? title.slice(0, 12) + ".." : title;
+
+      return `
+        <div class="sheet-chip">
+          <span class="sheet-name">
+            ${escapeHtml(item.id)} ${escapeHtml(shortTitle)}
+          </span>
+          <span class="sheet-qty">
+            ${Number(item.qty) || 0}п
+          </span>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+async function generateSavedOrderPng(order) {
+  const token = ++sheetGenerationToken;
+  const saveButton = document.getElementById("saveSavedOrderBtn");
+  saveButton.disabled = true;
+  saveButton.textContent = "Подготавливаем карточку…";
+  generatedFile = null;
+
+  try {
+    const file = await createSheetPngFile({
+      orderId: order.orderId,
+      cacheKey: getSavedOrderPngCacheKey(order),
+      delayMs: 80,
+      token,
+    });
+    if (!file || token !== sheetGenerationToken) return;
+
+    generatedFile = file;
+    saveButton.disabled = false;
+    saveButton.textContent = "Сохранить в галерею";
+  } catch (error) {
+    console.error("Не удалось восстановить карточку", error);
+    if (token === sheetGenerationToken) {
+      saveButton.textContent = "Не удалось создать PNG";
+      showToast("Карточку не удалось подготовить");
+    }
+  }
+}
+
+function openSavedOrderCard(order) {
+  closeSavedOrders();
+  savedSheetMode = true;
+  lastOrderId = order.orderId;
+
+  document.getElementById("sheetTitle").textContent =
+    order.title || "ЗАКАЗ " + order.orderId;
+  document.getElementById("sheetDate").textContent = getSavedOrderDate(order);
+  document.getElementById("sheetOrderLabel").textContent = order.orderLabel || "";
+  document.getElementById("sheetClient").innerHTML = `
+    ${escapeHtml(order.name)}
+    <br>
+    ${escapeHtml(order.phone)}
+    <div class="sheet-pickup">${escapeHtml(order.pickup)}</div>
+  `;
+  document.getElementById("sheetTotal").textContent =
+    `${(Number(order.total) || 0).toLocaleString("ru-RU")} ₽`;
+  document.getElementById("sheetTotalItems").textContent =
+    `${Number(order.totalItems) || 0} п`;
+
+  const copyButton = document.getElementById("copyOrderIdBtn");
+  copyButton.style.display = "inline-flex";
+  copyButton.textContent = "Скопировать " + order.orderId;
+  fillSheetItems(order.items);
+
+  document.querySelector(".sheet-buttons").style.display = "none";
+  document.querySelector(".sheet-message").style.display = "none";
+  document.getElementById("savedSheetActions").hidden = false;
+  sheetModal.style.display = "flex";
+  lockBody();
+  generateSavedOrderPng(order);
+}
+
+async function saveRestoredOrderPng() {
+  if (!generatedFile) {
+    showToast("Карточка ещё создаётся");
+    return;
+  }
+
+  try {
+    if (
+      navigator.share &&
+      (!navigator.canShare || navigator.canShare({ files: [generatedFile] }))
+    ) {
+      await navigator.share({
+        files: [generatedFile],
+        title: "Карточка заказа " + lastOrderId,
+      });
+      return;
+    }
+
+    const url = URL.createObjectURL(generatedFile);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = generatedFile.name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) {
+    if (error && error.name !== "AbortError") {
+      console.error("Не удалось сохранить карточку", error);
+      showToast("Не удалось сохранить карточку");
+    }
+  }
+}
+
+function closeSavedOrderCard() {
+  sheetGenerationToken++;
+  savedSheetMode = false;
+  generatedFile = null;
+  sheetModal.style.display = "none";
+  document.getElementById("savedSheetActions").hidden = true;
+  document.querySelector(".sheet-buttons").style.display = "flex";
+  document.querySelector(".sheet-message").style.display = "block";
+  unlockBody();
+  openSavedOrders();
+}
+
+renderSavedOrdersSummary();
+document.getElementById("savedOrdersBanner").addEventListener("click", openSavedOrders);
+
+const savedOrdersModalElement = document.getElementById("savedOrdersModal");
+const closeSavedOrdersButton = document.getElementById("closeSavedOrdersBtn");
+
+closeSavedOrdersButton.addEventListener("click", () => {
+  closeSavedOrdersButton.classList.add("saved-orders-pressed");
+  setTimeout(() => {
+    closeSavedOrdersButton.classList.remove("saved-orders-pressed");
+    closeSavedOrders();
+  }, 110);
+});
+
+savedOrdersModalElement.addEventListener("click", (event) => {
+  if (event.target === savedOrdersModalElement) {
+    closeSavedOrders();
+  }
+});
+
+document.getElementById("saveSavedOrderBtn").addEventListener("click", saveRestoredOrderPng);
+document
+  .getElementById("closeSavedOrderCardBtn")
+  .addEventListener("click", closeSavedOrderCard);
+
 
 function saveOrderDraft() {
   localStorage.setItem(
@@ -1547,7 +2176,7 @@ function launchTomatoHeart() {
 
   const logoTomato = document.getElementById("logoTomato");
 
-  logoTomato.src = "./tomato/tomato-idle-closed.png";
+  logoTomato.src = "./tomato/tomato-idle-closed-ui.png";
 
   const hearts = [
     "./tomato/heart1-anim.png",
@@ -1587,7 +2216,7 @@ function launchTomatoHeart() {
   }
 
   setTimeout(() => {
-    logoTomato.src = "./tomato/tomato-idle.png";
+    logoTomato.src = "./tomato/tomato-idle-ui.png";
   }, 700);
 }
 
@@ -1604,10 +2233,10 @@ logoTomato.addEventListener("click", () => {
 
   logoTomato.classList.add("tomato-bonk");
 
-  logoTomato.src = "./tomato/tomato-angry.png";
+  logoTomato.src = "./tomato/tomato-angry-ui.png";
 
   setTimeout(() => {
-    logoTomato.src = "./tomato/tomato-idle.png";
+    logoTomato.src = "./tomato/tomato-idle-ui.png";
 
     logoTomato.classList.remove("tomato-bonk");
 
@@ -1622,7 +2251,7 @@ function launchTomatoKiss() {
 
   const logoTomato = document.getElementById("logoTomato");
 
-  logoTomato.src = "./tomato/tomato-kiss.png";
+  logoTomato.src = "./tomato/tomato-kiss-ui.png";
 
   const kiss = document.createElement("img");
 
@@ -1641,7 +2270,7 @@ function launchTomatoKiss() {
   }, 1400);
 
   setTimeout(() => {
-    logoTomato.src = "./tomato/tomato-idle.png";
+    logoTomato.src = "./tomato/tomato-idle-ui.png";
   }, 800);
 }
 
@@ -1650,10 +2279,10 @@ function launchTomatoBlink() {
 
   if (!logoTomato) return;
 
-  logoTomato.src = "./tomato/tomato-idle-closed.png";
+  logoTomato.src = "./tomato/tomato-idle-closed-ui.png";
 
   setTimeout(() => {
-    logoTomato.src = "./tomato/tomato-idle.png";
+    logoTomato.src = "./tomato/tomato-idle-ui.png";
   }, 180);
 }
 
@@ -1664,7 +2293,7 @@ function launchTomatoCrown() {
 
   const crown = document.createElement("img");
 
-  crown.src = "./tomato/crown.png";
+  crown.src = "./tomato/crown-ui.png";
 
   crown.className = "crown-pop";
 
@@ -1676,21 +2305,31 @@ function launchTomatoCrown() {
 }
 
 fetchJsonWithTimeout(
-  "https://script.google.com/macros/s/AKfycbwAIYzIGkeGriT_B4Z1M58oK1xqexMiyDpE4eGnQTTQt-CeJwbeh_vkqXMXipE1END2/exec",
+  CATALOG_API_URL,
   {},
   12000,
 )
-  .then((data) => {
-    products = data;
+  .then(async (data) => {
+    if (isSeasonClosedResponse(data)) {
+      showCatalogSeasonClosed();
+      return;
+    }
+
+    const catalogProducts = Array.isArray(data)
+      ? data
+      : data && Array.isArray(data.products)
+        ? data.products
+        : null;
+
+    if (!catalogProducts) {
+      throw new Error("Сервер вернул некорректный каталог");
+    }
+
+    products = catalogProducts;
     const availableProducts = products.filter((p) => p.available === true);
 
     if (availableProducts.length === 0) {
-      document.getElementById("catalog").style.display = "none";
-
-      document.getElementById("catalogClosed").style.display = "block";
-      document.getElementById("loadingScreen")?.remove();
-
-      document.querySelector(".header").classList.add("season-closed");
+      showCatalogSeasonClosed();
       return;
     }
 
@@ -1753,96 +2392,7 @@ fetchJsonWithTimeout(
     });
 
     renderProducts();
-
-    const deferredInfoTag = document.getElementById("infoToggle");
-    const loadInfoTag = () => {
-      if (deferredInfoTag?.dataset.src && !deferredInfoTag.hasAttribute("src")) {
-        deferredInfoTag.src = deferredInfoTag.dataset.src;
-      }
-    };
-
-    if ("requestIdleCallback" in window) {
-      window.requestIdleCallback(loadInfoTag, { timeout: 1800 });
-    } else {
-      setTimeout(loadInfoTag, 1200);
-    }
-
-    const style = document.createElement("style");
-
-    style.textContent = `
-@keyframes warningFloat {
-  0%   { transform: translateY(0); }
-  50%  { transform: translateY(-8px); }
-  100% { transform: translateY(0); }
-}
-
-`;
-
-    document.head.appendChild(style);
-
-    document.querySelectorAll("img").forEach((img) => {
-      if (!img.src.includes("imgfy.ru")) return;
-
-      img.addEventListener(
-        "error",
-        () => {
-          document.body.innerHTML = `
-      <div style="
-        min-height:80vh;
-        display:flex;
-        flex-direction:column;
-        align-items:center;
-        justify-content:center;
-        padding:24px;
-        text-align:center;
-      ">
-   
-        <div style="
-        font-size:72px;
-        margin-bottom:20px;
-         animation: warningFloat 3s cubic-bezier(0.42, 0, 0.58, 1) infinite;
-        ">
-        ⚠️
-      </div>
-
-        <div style="
-          font-size:20px;
-          line-height:1.6;
-        ">
-          Отключите VPN и перезапустите каталог
-        </div>
-        <button
-    onmousedown="this.style.transform='scale(.97)'"
-    onmouseup="this.style.transform='scale(1)'"
-    ontouchstart="this.style.transform='scale(.97)'"
-    ontouchend="this.style.transform='scale(1)'"
-    onclick="location.reload()"
-    style="
-    margin-top:24px;
-    min-width:220px;
-    height:52px;
-    border:none;
-    border-radius:26px;
-    font-size:17px;
-    letter-spacing: 0.3px;
-    font-weight:600;
-    background:#18b978;
-    color:#fff;
-    cursor:pointer;
-    box-shadow:0 4px 14px rgba(24,185,120,.25);
-
-    
-  "
->
-  Перезапустить каталог
-</button>
-  
-      </div>
-    `;
-        },
-        { once: true },
-      );
-    });
+    await waitForInitialProductImages(8, 1600);
 
     updateCart();
 
@@ -1852,11 +2402,11 @@ fetchJsonWithTimeout(
     // стартуем с надутого
     if (!loadingTomato || !loadingScreen) return;
 
-    loadingTomato.src = "./tomato/tomato-breath.png";
+    loadingTomato.src = "./tomato/tomato-breath-loader.png";
 
     setTimeout(() => {
       // стал обычным
-      loadingTomato.src = "./tomato/tomato-idle.png";
+      loadingTomato.src = "./tomato/tomato-idle-loader.png";
     }, 400);
 
     setTimeout(() => {
@@ -2045,7 +2595,7 @@ const infoToggle = document.getElementById("infoToggle");
 infoToggle.addEventListener("click", () => {
   vibrate(15);
 
-  infoToggle.src = "./tomato/info-click.png";
+  infoToggle.src = "./tomato/info-click-tag.png";
 
   infoToggle.style.opacity = "0";
 
@@ -2053,7 +2603,7 @@ infoToggle.addEventListener("click", () => {
 
   const fly = document.createElement("img");
 
-  fly.src = "./tomato/info-popup.png";
+  fly.src = "./tomato/info-popup-ui.png";
 
   fly.className = "info-fly";
 
@@ -2108,7 +2658,7 @@ infoToggle.addEventListener("click", () => {
 
     infoToggle.style.opacity = "1";
 
-    infoToggle.src = "./tomato/info.png";
+    infoToggle.src = "./tomato/info-tag.png";
   });
 
   overlay.addEventListener("click", () => {
@@ -2120,7 +2670,7 @@ infoToggle.addEventListener("click", () => {
 
     infoToggle.style.opacity = "1";
 
-    infoToggle.src = "./tomato/info.png";
+    infoToggle.src = "./tomato/info-tag.png";
   });
 
   fly.addEventListener("click", (e) => {
@@ -2369,60 +2919,24 @@ if (pendingSheetData) {
 
   document.getElementById("saveBtn").style.display = "none";
 
-  setTimeout(() => {
-
-  const original = document.getElementById("sheetBox");
-
-  const clone = original.cloneNode(true);
-
-  clone.querySelectorAll("img").forEach(img => {
-    img.remove();
-  });
-
-  clone.style.borderRadius = "28px";
-  clone.style.overflow = "hidden";
-
-  const sandbox = document.createElement("div");
-
-  sandbox.style.position = "fixed";
-  sandbox.style.left = "-99999px";
-
-  sandbox.appendChild(clone);
-
-  document.body.appendChild(sandbox);
-
-  if (typeof window.html2canvas !== "function") {
-    sandbox.remove();
-    showToast("Карточку заказа не удалось подготовить" );
-    return;
-  }
-
-  window.html2canvas(clone, {
-    scale: 2,
-    useCORS: false,
-    imageTimeout: 0,
-    backgroundColor: null
-  }).then(canvas => {
-
-    sandbox.remove();
-
-    canvas.toBlob(blob => {
-
-      generatedFile = new File(
-        [blob],
-        "order.png",
-        {
-          type: "image/png"
-        }
-      );
-
+  generatedFile = null;
+  const pngToken = ++sheetGenerationToken;
+  createSheetPngFile({
+    orderId: data.orderId || "order",
+    delayMs: 300,
+    token: pngToken,
+  })
+    .then((file) => {
+      if (!file || pngToken !== sheetGenerationToken) return;
+      generatedFile = file;
       document.getElementById("saveBtn").style.display = "flex";
-
-    }, "image/png");
-
-  });
-
-}, 300);
+    })
+    .catch((error) => {
+      console.error("Не удалось подготовить сохранённую карточку", error);
+      if (pngToken === sheetGenerationToken) {
+        showToast("Карточку заказа не удалось подготовить");
+      }
+    });
 }
 
 if ('serviceWorker' in navigator) {
