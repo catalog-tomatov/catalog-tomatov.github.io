@@ -15,7 +15,7 @@
     Каталог семян томатов
   </title>
 
-  <link rel="manifest" href="/manifest.json">
+  <link rel="manifest" href="./manifest.json?v=2">
 
   <meta name="theme-color" content="#9b1801">
 
@@ -28,7 +28,7 @@
 
   <link
     rel="stylesheet"
-    href="style.css?v=29"
+    href="style.css?v=32"
   />
 
 <link rel="preload" as="image" href="./tomato/tomato-breath-loader.png" type="image/png" fetchpriority="high">
@@ -37,6 +37,8 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://script.google.com">
+<link rel="preconnect" href="https://imgfy.ru" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;600;700;800;900&display=swap" rel="stylesheet">
 
 <meta property="og:title"
@@ -171,11 +173,12 @@ content="summary_large_image">
       placeholder="Найти..."
     >
 
-    <span
-  id="clearSearch"
-  class="clear-search"
->
-</span>
+    <button
+      type="button"
+      id="clearSearch"
+      class="clear-search"
+      aria-label="Очистить поиск"
+    ></button>
   </div>
 
   <img
@@ -215,7 +218,7 @@ content="summary_large_image">
 >
   <span class="saved-orders-banner-icon" aria-hidden="true">📄</span>
   <span class="saved-orders-banner-copy">
-    <span class="saved-orders-banner-title">Сохранённые заказы</span>
+    <span class="saved-orders-banner-title">Сохраненные заказы</span>
   </span>
   <strong id="savedOrdersCount" class="saved-orders-banner-count">0</strong>
   <span class="saved-orders-banner-chevron" aria-hidden="true">›</span>
@@ -438,7 +441,7 @@ content="summary_large_image">
   style="display:none"
 />
   <div id="orderSubmitError" class="order-submit-error" role="alert" hidden>
-    Google временно не ответил. Корзина сохранена — нажмите «Повторить».
+    Сервер не ответил. Корзина сохранена — нажмите «Повторить».
   </div>
   <button id="createOrderBtn">
     Создать заказ
@@ -861,13 +864,13 @@ content="summary_large_image">
 
 
 
-<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+<script src="./vendor/canvas-confetti-1.9.3.min.js"></script>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="./vendor/html2canvas-1.4.1.min.js"></script>
 
 <button id="backToTopBtn" class="back-to-top" type="button" aria-label="Вернуться наверх">↑</button>
 
-<script src="script.js?v=29"></script>
+<script src="script.js?v=38"></script>
 
 </body>
 

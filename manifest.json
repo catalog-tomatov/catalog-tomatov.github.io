@@ -1,7 +1,7 @@
 {
   "name": "Каталог томатов",
   "short_name": "Томаты",
-  "start_url": "/",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#9b1801",

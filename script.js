@@ -8,6 +8,8 @@ let products = [];
 
 const CATALOG_API_URL =
   "https://script.google.com/macros/s/AKfycbwAIYzIGkeGriT_B4Z1M58oK1xqexMiyDpE4eGnQTTQt-CeJwbeh_vkqXMXipE1END2/exec";
+const CATALOG_CACHE_KEY = "tomatoCatalogCacheV1";
+const CATALOG_CACHE_TTL = 5 * 60 * 1000;
 
 const SAVED_ORDERS_KEY = "savedOrders";
 const SAVED_ORDERS_LIMIT = 10;
@@ -30,6 +32,11 @@ function runScheduledStorageReset(now = Date.now()) {
   ].forEach((key) => localStorage.removeItem(key));
 
   localStorage.setItem(RESET_VERSION_KEY, RESET_VERSION);
+
+  if ("caches" in window) {
+    void caches.delete("order-png-v1");
+  }
+
   return true;
 }
 
@@ -298,6 +305,45 @@ async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 12000) {
   }
 }
 
+function readCatalogCache(allowExpired = false) {
+  try {
+    const cached = JSON.parse(localStorage.getItem(CATALOG_CACHE_KEY) || "null");
+    if (!cached || !cached.savedAt || !cached.data) return null;
+
+    const isFresh = Date.now() - cached.savedAt < CATALOG_CACHE_TTL;
+    return isFresh || allowExpired ? cached.data : null;
+  } catch (error) {
+    localStorage.removeItem(CATALOG_CACHE_KEY);
+    return null;
+  }
+}
+
+function writeCatalogCache(data) {
+  try {
+    localStorage.setItem(
+      CATALOG_CACHE_KEY,
+      JSON.stringify({ savedAt: Date.now(), data }),
+    );
+  } catch (error) {
+    console.warn("Каталог не удалось сохранить в кэш", error);
+  }
+}
+
+async function loadCatalogData() {
+  const freshCache = readCatalogCache();
+  if (freshCache) return freshCache;
+
+  try {
+    const data = await fetchJsonWithTimeout(CATALOG_API_URL, {}, 12000);
+    writeCatalogCache(data);
+    return data;
+  } catch (error) {
+    const fallbackCache = readCatalogCache(true);
+    if (fallbackCache) return fallbackCache;
+    throw error;
+  }
+}
+
 /* ELEMENTS */
 
 const catalog = document.getElementById("catalog");
@@ -493,17 +539,29 @@ window.addEventListener("resize", () => {
   }, 100);
 });
 
-function waitForInitialProductImages(limit = 8, timeoutMs = 1600) {
-  const images = Array.from(
-    document.querySelectorAll(".product-image img"),
-  ).slice(0, limit);
+const catalogImageWarmers = new Set();
 
-  if (!images.length) return Promise.resolve();
+function waitForInitialProductImages(limit = 24, timeoutMs = 8000) {
+  const allImages = Array.from(
+    document.querySelectorAll(".product-image img"),
+  );
+  const images = allImages.filter((image, index) => {
+    if (index < limit) return true;
+
+    const rect = image.getBoundingClientRect();
+    return rect.bottom >= -window.innerHeight && rect.top <= window.innerHeight * 2;
+  });
+
+  if (!images.length) {
+    return Promise.resolve({ total: 0, loaded: 0, failed: 0, timedOut: false });
+  }
 
   const waitForImage = (image) => {
-    const decodeImage = () => {
-      if (typeof image.decode !== "function") return Promise.resolve();
-      return image.decode().catch(() => undefined);
+    const decodeImage = async () => {
+      if (typeof image.decode === "function") {
+        await image.decode().catch(() => undefined);
+      }
+      return image.naturalWidth > 0;
     };
 
     if (image.complete) return decodeImage();
@@ -512,18 +570,95 @@ function waitForInitialProductImages(limit = 8, timeoutMs = 1600) {
       const finish = () => {
         image.removeEventListener("load", finish);
         image.removeEventListener("error", finish);
-        resolve();
+        resolve(image.naturalWidth > 0);
       };
 
       image.addEventListener("load", finish, { once: true });
       image.addEventListener("error", finish, { once: true });
-    }).then(decodeImage);
+    }).then((loaded) => loaded && decodeImage());
   };
 
-  return Promise.race([
-    Promise.all(images.map(waitForImage)),
-    new Promise((resolve) => setTimeout(resolve, timeoutMs)),
-  ]);
+  const completed = Promise.all(images.map(waitForImage)).then((results) => ({
+    total: images.length,
+    loaded: results.filter(Boolean).length,
+    failed: results.filter((loaded) => !loaded).length,
+    timedOut: false,
+  }));
+
+  const timedOut = new Promise((resolve) => {
+    setTimeout(() => {
+      const loaded = images.filter(
+        (image) => image.complete && image.naturalWidth > 0,
+      ).length;
+      resolve({
+        total: images.length,
+        loaded,
+        failed: images.length - loaded,
+        timedOut: true,
+      });
+    }, timeoutMs);
+  });
+
+  return Promise.race([completed, timedOut]);
+}
+
+function showCatalogConnectionError(message) {
+  const loadingScreen = document.getElementById("loadingScreen");
+  const loadingText = loadingScreen?.querySelector(".loading-text");
+  const loadingTomato = document.getElementById("loadingTomato");
+
+  if (loadingScreen && loadingText) {
+    loadingScreen.classList.remove("is-finishing");
+    loadingText.classList.add("loading-error");
+    loadingText.innerHTML =
+      "<strong>Нет связи</strong>" +
+      `<span>${escapeHtml(message)}</span>` +
+      '<button type="button" onclick="location.reload()">Повторить</button>';
+
+    if (loadingTomato) {
+      loadingTomato.src = "./tomato/tomato-angry-ui.png";
+    }
+    return;
+  }
+
+  catalog.innerHTML =
+    '<div class="catalog-load-error">' +
+      '<div class="catalog-load-error-icon">🍅</div>' +
+      "<strong>Нет связи</strong>" +
+      `<span>${escapeHtml(message)}</span>` +
+      '<button type="button" onclick="location.reload()">Повторить</button>' +
+    "</div>";
+}
+
+function warmRemainingProductImages(startIndex = 24, concurrency = 10) {
+  const urls = Array.from(document.querySelectorAll(".product-image img"))
+    .slice(startIndex)
+    .map((image) => image.currentSrc || image.src)
+    .filter(Boolean);
+
+  let nextIndex = 0;
+
+  const loadNext = () => {
+    if (nextIndex >= urls.length) return;
+
+    const image = new Image();
+    const url = urls[nextIndex++];
+    catalogImageWarmers.add(image);
+
+    const finish = () => {
+      catalogImageWarmers.delete(image);
+      loadNext();
+    };
+
+    image.decoding = "async";
+    image.onload = finish;
+    image.onerror = finish;
+    image.src = url;
+  };
+
+  for (let index = 0; index < Math.min(concurrency, urls.length); index++) {
+    loadNext();
+  }
 }
 function renderProducts() {
   catalog.innerHTML = "";
@@ -573,8 +708,8 @@ ${isNew ? "new новинка" : ""}
     alt="${escapeHtml(product.title)}"
     width="104"
     height="116"
-    loading="${productIndex < 4 ? "eager" : "lazy"}"
-    fetchpriority="${productIndex < 2 ? "high" : "auto"}"
+    loading="${productIndex < 24 ? "eager" : "lazy"}"
+    fetchpriority="${productIndex < 4 ? "high" : "auto"}"
     decoding="async"
   >
 
@@ -1341,9 +1476,13 @@ document.body.appendChild(blocker);
           })();
         }
         const pngToken = ++sheetGenerationToken;
+        const savedOrderForPng = savedOrders.find(
+          (order) => String(order.orderId) === String(orderId),
+        );
         createSheetPngFile({
           orderId,
-          delayMs: 1800,
+          cacheKey: getSavedOrderPngCacheKey(savedOrderForPng),
+          delayMs: 900,
           token: pngToken,
         })
           .then((file) => {
@@ -1701,7 +1840,8 @@ let lastOrderId = "";
 let savedSheetMode = false;
 let sheetGenerationToken = 0;
 const sheetPngCache = new Map();
-const SHEET_PNG_CACHE_LIMIT = 3;
+const SHEET_PNG_CACHE_LIMIT = 10;
+const SHEET_PNG_PERSISTENT_CACHE = "order-png-v1";
 
 function getSavedOrderPngCacheKey(order) {
   const requestIds = Array.isArray(order?.requestIds)
@@ -1738,14 +1878,69 @@ function cacheSheetPng(cacheKey, file) {
   }
 }
 
+function getSheetPngPersistentCacheUrl(cacheKey) {
+  return new URL(
+    `./.order-png-cache/${encodeURIComponent(cacheKey)}.png`,
+    window.location.href,
+  ).href;
+}
+
+async function getPersistentSheetPng(cacheKey, orderId) {
+  if (!cacheKey || !("caches" in window)) return null;
+
+  try {
+    const cache = await caches.open(SHEET_PNG_PERSISTENT_CACHE);
+    const response = await cache.match(getSheetPngPersistentCacheUrl(cacheKey));
+    if (!response) return null;
+
+    const blob = await response.blob();
+    const safeOrderId = String(orderId || "order").replace(
+      /[^0-9A-Za-zА-Яа-я_-]/g,
+      "",
+    );
+    return new File([blob], `order-${safeOrderId || "order"}.png`, {
+      type: blob.type || "image/png",
+    });
+  } catch (error) {
+    console.warn("Сохранённый PNG не удалось прочитать из кэша", error);
+    return null;
+  }
+}
+
+async function persistSheetPng(cacheKey, file) {
+  if (!cacheKey || !file || !("caches" in window)) return;
+
+  try {
+    const cache = await caches.open(SHEET_PNG_PERSISTENT_CACHE);
+    const response = new Response(file, {
+      headers: { "Content-Type": "image/png" },
+    });
+    await cache.put(getSheetPngPersistentCacheUrl(cacheKey), response);
+
+    const keys = await cache.keys();
+    while (keys.length > SHEET_PNG_CACHE_LIMIT) {
+      await cache.delete(keys.shift());
+    }
+  } catch (error) {
+    console.warn("PNG не удалось сохранить между запусками", error);
+  }
+}
+
 async function createSheetPngFile({
   orderId,
   cacheKey = "",
   delayMs = 0,
+  renderScale = 2,
   token = sheetGenerationToken,
 }) {
   const cachedFile = getCachedSheetPng(cacheKey);
   if (cachedFile) return cachedFile;
+
+  const persistentFile = await getPersistentSheetPng(cacheKey, orderId);
+  if (persistentFile && token === sheetGenerationToken) {
+    cacheSheetPng(cacheKey, persistentFile);
+    return persistentFile;
+  }
 
   if (delayMs > 0) {
     await new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -1759,7 +1954,6 @@ async function createSheetPngFile({
   const original = document.getElementById("sheetBox");
   if (!original) throw new Error("Карточка заказа не найдена");
 
-  document.querySelectorAll("canvas").forEach((canvas) => canvas.remove());
 
   const clone = original.cloneNode(true);
   clone
@@ -1790,7 +1984,7 @@ async function createSheetPngFile({
     if (token !== sheetGenerationToken) return null;
 
     const canvas = await window.html2canvas(clone, {
-      scale: 2,
+      scale: Math.max(1, Math.min(2, Number(renderScale) || 2)),
       useCORS: false,
       imageTimeout: 0,
       backgroundColor: null,
@@ -1813,6 +2007,7 @@ async function createSheetPngFile({
       type: "image/png",
     });
     cacheSheetPng(cacheKey, file);
+    void persistSheetPng(cacheKey, file);
     return file;
   } finally {
     sandbox.remove();
@@ -1921,7 +2116,8 @@ async function generateSavedOrderPng(order) {
     const file = await createSheetPngFile({
       orderId: order.orderId,
       cacheKey: getSavedOrderPngCacheKey(order),
-      delayMs: 80,
+      delayMs: 0,
+      renderScale: 1.5,
       token,
     });
     if (!file || token !== sheetGenerationToken) return;
@@ -2304,11 +2500,7 @@ function launchTomatoCrown() {
   }, 1000);
 }
 
-fetchJsonWithTimeout(
-  CATALOG_API_URL,
-  {},
-  12000,
-)
+loadCatalogData()
   .then(async (data) => {
     if (isSeasonClosedResponse(data)) {
       showCatalogSeasonClosed();
@@ -2392,8 +2584,23 @@ fetchJsonWithTimeout(
     });
 
     renderProducts();
-    await waitForInitialProductImages(8, 1600);
+    const [initialImages] = await Promise.all([
+      waitForInitialProductImages(24, 8000),
+      new Promise((resolve) => setTimeout(resolve, 2000)),
+    ]);
 
+    if (
+      initialImages.timedOut ||
+      initialImages.failed > 0 ||
+      initialImages.loaded < initialImages.total
+    ) {
+      showCatalogConnectionError(
+        "Проверьте интернет или выключите VPN.",
+      );
+      return;
+    }
+
+    warmRemainingProductImages(24, 10);
     updateCart();
 
     const loadingTomato = document.getElementById("loadingTomato");
@@ -2447,14 +2654,9 @@ fetchJsonWithTimeout(
     }, 1060);
   })
   .catch(() => {
-    document.getElementById("loadingScreen")?.remove();
-    catalog.innerHTML =
-      '<div class="catalog-load-error">' +
-        '<div class="catalog-load-error-icon">🍅</div>' +
-        '<strong>Каталог не загрузился</strong>' +
-        '<span>Проверьте интернет и попробуйте ещё раз.</span>' +
-        '<button type="button" onclick="location.reload()">Повторить</button>' +
-      '</div>';
+    showCatalogConnectionError(
+      "Каталог не загрузился. Проверьте интернет или VPN.",
+    );
   });
 
 setInterval(() => {
@@ -2921,9 +3123,13 @@ if (pendingSheetData) {
 
   generatedFile = null;
   const pngToken = ++sheetGenerationToken;
+  const restoredOrderForPng = savedOrders.find(
+    (order) => String(order.orderId) === String(data.orderId),
+  );
   createSheetPngFile({
     orderId: data.orderId || "order",
-    delayMs: 300,
+    cacheKey: getSavedOrderPngCacheKey(restoredOrderForPng),
+    delayMs: 50,
     token: pngToken,
   })
     .then((file) => {
@@ -2932,7 +3138,7 @@ if (pendingSheetData) {
       document.getElementById("saveBtn").style.display = "flex";
     })
     .catch((error) => {
-      console.error("Не удалось подготовить сохранённую карточку", error);
+      console.error("Не удалось подготовить сохраненную карточку", error);
       if (pngToken === sheetGenerationToken) {
         showToast("Карточку заказа не удалось подготовить");
       }
@@ -2941,7 +3147,7 @@ if (pendingSheetData) {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js');
+    navigator.serviceWorker.register("./sw.js");
   });
 }
 
