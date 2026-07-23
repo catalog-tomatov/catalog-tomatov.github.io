@@ -1705,43 +1705,74 @@ document.getElementById("createOrderBtn").onclick = async () => {
 
 /* SAVE */
 
+function downloadOrderPng(file) {
+  const url = URL.createObjectURL(file);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = file.name;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
+}
+
 document.getElementById("saveBtn").onclick = async () => {
   if (!generatedFile) {
     showToast("⏳ Карточка ещё создаётся");
     return;
   }
 
+  const hour = new Date().getHours();
+  let greeting;
+
+  if (hour >= 5 && hour <= 10) {
+    greeting = "Доброе утро";
+  } else if (hour >= 11 && hour <= 17) {
+    greeting = "Добрый день";
+  } else if (hour >= 18 && hour <= 22) {
+    greeting = "Добрый вечер";
+  } else {
+    greeting = "Доброй ночи";
+  }
+
+  const shareData = {
+    files: [generatedFile],
+    title: "Заказ по семенам томатов",
+    text: `${greeting}! Направляю заказ по семенам томатов для подтверждения и оплаты. 🍅`,
+  };
+
   try {
-    const hour = new Date().getHours();
-
-    let greeting;
-
-    if (hour >= 5 && hour <= 10) {
-      greeting = "Доброе утро";
-    } else if (hour >= 11 && hour <= 17) {
-      greeting = "Добрый день";
-    } else if (hour >= 18 && hour <= 22) {
-      greeting = "Добрый вечер";
+    if (
+      navigator.share &&
+      (!navigator.canShare || navigator.canShare({ files: [generatedFile] }))
+    ) {
+      await navigator.share(shareData);
     } else {
-      greeting = "Доброй ночи";
+      downloadOrderPng(generatedFile);
     }
 
-    await navigator.share({
-      files: [generatedFile],
-      title: "Заказ по семенам томатов",
-      text: `${greeting}! Направляю заказ по семенам томатов для подтверждения и оплаты. 🍅`,
-    });
-
     localStorage.removeItem("pendingSheet");
+    setTimeout(() => location.reload(), 300);
+  } catch (error) {
+    if (error && error.name === "AbortError") return;
 
-    setTimeout(() => {
-      location.reload();
-    }, 300);
-  } catch (err) {
-    console.log("Отправка отменена", err);
+    console.warn("Системная отправка недоступна, сохраняем PNG", error);
+    try {
+      downloadOrderPng(generatedFile);
+      localStorage.removeItem("pendingSheet");
+    } catch (downloadError) {
+      console.error("Не удалось отправить карточку", downloadError);
+      showToast("Не удалось открыть карточку для отправки");
+    }
   }
 };
 
+document.getElementById("saveBtn").addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  event.currentTarget.click();
+});
 /* CLOSE MODALS */
 
 cartModal.addEventListener("click", (e) => {
@@ -1926,6 +1957,236 @@ async function persistSheetPng(cacheKey, file) {
   }
 }
 
+function resolveWithin(promise, timeoutMs, fallbackValue = null) {
+  return new Promise((resolve) => {
+    let finished = false;
+    const timer = setTimeout(() => {
+      if (finished) return;
+      finished = true;
+      resolve(fallbackValue);
+    }, timeoutMs);
+
+    Promise.resolve(promise).then(
+      (value) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        resolve(fallbackValue);
+      },
+    );
+  });
+}
+
+function rejectAfter(promise, timeoutMs, message) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function dataUrlToBlob(dataUrl) {
+  const commaIndex = dataUrl.indexOf(",");
+  const header = dataUrl.slice(0, commaIndex);
+  const mimeMatch = header.match(/^data:([^;]+)/);
+  const binary = atob(dataUrl.slice(commaIndex + 1));
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index++) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return new Blob([bytes], {
+    type: mimeMatch ? mimeMatch[1] : "image/png",
+  });
+}
+
+async function canvasToPngBlob(canvas) {
+  if (typeof canvas.toBlob === "function") {
+    const blob = await resolveWithin(
+      new Promise((resolve) => canvas.toBlob(resolve, "image/png")),
+      2500,
+      null,
+    );
+    if (blob) return blob;
+  }
+
+  return dataUrlToBlob(canvas.toDataURL("image/png"));
+}
+
+function makeOrderPngFile(blob, orderId) {
+  const safeOrderId = String(orderId || "order").replace(
+    /[^0-9A-Za-zА-Яа-я_-]/g,
+    "",
+  );
+
+  return new File([blob], `order-${safeOrderId || "order"}.png`, {
+    type: "image/png",
+  });
+}
+
+function drawRoundedCanvasRect(context, x, y, width, height, radius) {
+  const safeRadius = Math.min(radius, width / 2, height / 2);
+  context.beginPath();
+  context.moveTo(x + safeRadius, y);
+  context.arcTo(x + width, y, x + width, y + height, safeRadius);
+  context.arcTo(x + width, y + height, x, y + height, safeRadius);
+  context.arcTo(x, y + height, x, y, safeRadius);
+  context.arcTo(x, y, x + width, y, safeRadius);
+  context.closePath();
+}
+
+function shortenCanvasText(context, value, maxWidth) {
+  const text = String(value || "").trim();
+  if (context.measureText(text).width <= maxWidth) return text;
+
+  let shortened = text;
+  while (
+    shortened.length > 1 &&
+    context.measureText(shortened + "…").width > maxWidth
+  ) {
+    shortened = shortened.slice(0, -1);
+  }
+  return shortened + "…";
+}
+
+async function createFallbackSheetPngFile(orderId, cacheKey) {
+  const sheet = document.getElementById("sheetBox");
+  if (!sheet) throw new Error("Карточка заказа не найдена");
+
+  const itemRows = Array.from(sheet.querySelectorAll("#sheetItems .sheet-chip")).map(
+    (chip) => ({
+      name: chip.querySelector(".sheet-name")?.textContent?.trim() || "",
+      qty: chip.querySelector(".sheet-qty")?.textContent?.trim() || "",
+    }),
+  );
+  const clientLines = (
+    sheet.querySelector("#sheetClient")?.innerText || ""
+  )
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 4);
+
+  const columns = itemRows.length > 120 ? 4 : itemRows.length > 45 ? 3 : 2;
+  const rowHeight = itemRows.length > 120 ? 46 : 54;
+  const rows = Math.max(1, Math.ceil(itemRows.length / columns));
+  const canvas = document.createElement("canvas");
+  canvas.width = 1200;
+  canvas.height = Math.max(720, 410 + rows * rowHeight);
+
+  const context = canvas.getContext("2d", { alpha: false });
+  if (!context) throw new Error("Canvas недоступен");
+
+  context.fillStyle = "#fffaf4";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  context.fillStyle = "#0e8f6c";
+  drawRoundedCanvasRect(context, 32, 32, canvas.width - 64, 130, 28);
+  context.fill();
+
+  context.fillStyle = "#ffffff";
+  context.font = "700 46px Arial, sans-serif";
+  context.fillText(
+    shortenCanvasText(
+      context,
+      sheet.querySelector("#sheetTitle")?.textContent || "ЗАКАЗ",
+      760,
+    ),
+    74,
+    105,
+  );
+  context.font = "600 28px Arial, sans-serif";
+  context.textAlign = "right";
+  context.fillText(
+    sheet.querySelector("#sheetDate")?.textContent?.trim() || "",
+    canvas.width - 74,
+    100,
+  );
+  context.textAlign = "left";
+
+  context.fillStyle = "#303832";
+  context.font = "600 27px Arial, sans-serif";
+  clientLines.forEach((line, index) => {
+    context.fillText(shortenCanvasText(context, line, 650), 60, 215 + index * 38);
+  });
+
+  context.fillStyle = "#9b1801";
+  context.font = "800 38px Arial, sans-serif";
+  context.textAlign = "right";
+  context.fillText(
+    sheet.querySelector("#sheetTotal")?.textContent?.trim() || "",
+    canvas.width - 60,
+    220,
+  );
+  context.fillStyle = "#303832";
+  context.font = "600 25px Arial, sans-serif";
+  context.fillText(
+    sheet.querySelector("#sheetTotalItems")?.textContent?.trim() || "",
+    canvas.width - 60,
+    262,
+  );
+  context.textAlign = "left";
+
+  const gridTop = 340;
+  const gap = 14;
+  const side = 52;
+  const cellWidth =
+    (canvas.width - side * 2 - gap * (columns - 1)) / columns;
+
+  itemRows.forEach((item, index) => {
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+    const x = side + column * (cellWidth + gap);
+    const y = gridTop + row * rowHeight;
+
+    context.fillStyle = "#ffffff";
+    context.strokeStyle = "#d8e3dc";
+    context.lineWidth = 2;
+    drawRoundedCanvasRect(context, x, y, cellWidth, rowHeight - 8, 13);
+    context.fill();
+    context.stroke();
+
+    context.fillStyle = "#303832";
+    context.font =
+      columns === 4
+        ? "600 20px Arial, sans-serif"
+        : "600 23px Arial, sans-serif";
+    context.fillText(
+      shortenCanvasText(context, item.name, cellWidth - 88),
+      x + 16,
+      y + 31,
+    );
+
+    context.fillStyle = "#0e8f6c";
+    context.font = "800 22px Arial, sans-serif";
+    context.textAlign = "right";
+    context.fillText(item.qty, x + cellWidth - 14, y + 31);
+    context.textAlign = "left";
+  });
+
+  context.fillStyle = "#637069";
+  context.font = "500 21px Arial, sans-serif";
+  context.fillText(
+    sheet.querySelector("#sheetOrderLabel")?.textContent?.trim() || "",
+    side,
+    canvas.height - 34,
+  );
+
+  const blob = await canvasToPngBlob(canvas);
+  const file = makeOrderPngFile(blob, orderId);
+  cacheSheetPng(cacheKey, file);
+  void persistSheetPng(cacheKey, file);
+  return file;
+}
+
 async function createSheetPngFile({
   orderId,
   cacheKey = "",
@@ -1936,7 +2197,12 @@ async function createSheetPngFile({
   const cachedFile = getCachedSheetPng(cacheKey);
   if (cachedFile) return cachedFile;
 
-  const persistentFile = await getPersistentSheetPng(cacheKey, orderId);
+  // Safari иногда задерживает Cache API. Кэш не должен блокировать новый PNG.
+  const persistentFile = await resolveWithin(
+    getPersistentSheetPng(cacheKey, orderId),
+    700,
+    null,
+  );
   if (persistentFile && token === sheetGenerationToken) {
     cacheSheetPng(cacheKey, persistentFile);
     return persistentFile;
@@ -1948,12 +2214,11 @@ async function createSheetPngFile({
 
   if (token !== sheetGenerationToken) return null;
   if (typeof window.html2canvas !== "function") {
-    throw new Error("html2canvas недоступен");
+    return createFallbackSheetPngFile(orderId, cacheKey);
   }
 
   const original = document.getElementById("sheetBox");
   if (!original) throw new Error("Карточка заказа не найдена");
-
 
   const clone = original.cloneNode(true);
   clone
@@ -1977,43 +2242,58 @@ async function createSheetPngFile({
   sandbox.style.position = "fixed";
   sandbox.style.left = "-99999px";
   sandbox.style.top = "0";
+  sandbox.style.pointerEvents = "none";
   sandbox.appendChild(clone);
   document.body.appendChild(sandbox);
+
+  // html2canvas клонирует весь документ. В Safari скрытые lazy-изображения
+  // могут задержать этот этап, поэтому явно исключаем их на время снимка.
+  const pageImagesToRestore = Array.from(document.images).filter(
+    (image) => !image.hasAttribute("data-html2canvas-ignore"),
+  );
+  pageImagesToRestore.forEach((image) =>
+    image.setAttribute("data-html2canvas-ignore", "true"),
+  );
 
   try {
     if (token !== sheetGenerationToken) return null;
 
-    const canvas = await window.html2canvas(clone, {
-      scale: Math.max(1, Math.min(2, Number(renderScale) || 2)),
-      useCORS: false,
-      imageTimeout: 0,
-      backgroundColor: null,
-      logging: false,
-    });
+    const canvas = await rejectAfter(
+      window.html2canvas(clone, {
+        scale: Math.max(1, Math.min(2, Number(renderScale) || 2)),
+        useCORS: false,
+        imageTimeout: 1000,
+        backgroundColor: null,
+        logging: false,
+        ignoreElements: (element) =>
+          element.tagName === "IMG" ||
+          element.hasAttribute("data-html2canvas-ignore"),
+      }),
+      7000,
+      "Создание карточки заняло слишком много времени",
+    );
 
     if (token !== sheetGenerationToken) return null;
 
-    const blob = await new Promise((resolve) =>
-      canvas.toBlob(resolve, "image/png"),
-    );
+    const blob = await canvasToPngBlob(canvas);
     if (!blob) throw new Error("Не удалось создать PNG");
     if (token !== sheetGenerationToken) return null;
 
-    const safeOrderId = String(orderId || "order").replace(
-      /[^0-9A-Za-zА-Яа-я_-]/g,
-      "",
-    );
-    const file = new File([blob], `order-${safeOrderId || "order"}.png`, {
-      type: "image/png",
-    });
+    const file = makeOrderPngFile(blob, orderId);
     cacheSheetPng(cacheKey, file);
     void persistSheetPng(cacheKey, file);
     return file;
+  } catch (error) {
+    console.warn("Основной PNG недоступен, создаём совместимую карточку", error);
+    if (token !== sheetGenerationToken) return null;
+    return createFallbackSheetPngFile(orderId, cacheKey);
   } finally {
+    pageImagesToRestore.forEach((image) =>
+      image.removeAttribute("data-html2canvas-ignore"),
+    );
     sandbox.remove();
   }
 }
-
 function renderSavedOrdersSummary() {
   const banner = document.getElementById("savedOrdersBanner");
   const count = document.getElementById("savedOrdersCount");
@@ -2117,7 +2397,7 @@ async function generateSavedOrderPng(order) {
       orderId: order.orderId,
       cacheKey: getSavedOrderPngCacheKey(order),
       delayMs: 0,
-      renderScale: 1.5,
+      renderScale: 2,
       token,
     });
     if (!file || token !== sheetGenerationToken) return;

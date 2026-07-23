@@ -34,6 +34,7 @@
 <link rel="preload" as="image" href="./tomato/tomato-breath-loader.png" type="image/png" fetchpriority="high">
 <link rel="preload" as="image" href="./tomato/tomato-idle-ui.png" type="image/png" fetchpriority="high">
 <link rel="preload" as="image" href="./tomato/info-tag.png" type="image/png">
+<link rel="preload" as="image" href="./tomato/send-card.png" type="image/png" fetchpriority="high">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -776,12 +777,15 @@ content="summary_large_image">
   <div class="sheet-buttons">
 
     <img
-  id="saveBtn"
-  src="./tomato/send-card.png"
-    loading="lazy"
-    decoding="async"
-  class="sheet-action-btn"
->
+      id="saveBtn"
+      src="./tomato/send-card.png"
+      decoding="sync"
+      fetchpriority="high"
+      alt="Отправить карточку заказа"
+      role="button"
+      tabindex="0"
+      class="sheet-action-btn"
+    >
 
   </div>
 
@@ -870,7 +874,7 @@ content="summary_large_image">
 
 <button id="backToTopBtn" class="back-to-top" type="button" aria-label="Вернуться наверх">↑</button>
 
-<script src="script.js?v=38"></script>
+<script src="script.js?v=39"></script>
 
 </body>
 
