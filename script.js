@@ -1933,7 +1933,7 @@ async function getPersistentSheetPng(cacheKey, orderId) {
       type: blob.type || "image/png",
     });
   } catch (error) {
-    console.warn("Сохранённый PNG не удалось прочитать из кэша", error);
+    console.warn("Сохраненный PNG не удалось прочитать из кэша", error);
     return null;
   }
 }
