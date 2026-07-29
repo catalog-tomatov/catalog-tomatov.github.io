@@ -825,7 +825,6 @@ body {
 /* PRODUCT */
 
 .product {
-  will-change: transform;
 
   width: 100%;
 
@@ -4407,10 +4406,6 @@ canvas {
 }
 /* PERFORMANCE AND ACCESSIBILITY REFINEMENT */
 
-.product {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 126px;
-}
 
 .search-icon {
   color: #8f3a2a;
