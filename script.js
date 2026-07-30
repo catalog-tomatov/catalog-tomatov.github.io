@@ -514,14 +514,25 @@ function observeProductTitleFitting() {
   }
 
   titleFitObserver = new IntersectionObserver(
-    (entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          fitProductTitles(entry.target);
-        }
+    (entries, observer) => {
+      const cards = entries
+        .filter((entry) => entry.isIntersecting)
+        .map((entry) => entry.target);
+
+      if (!cards.length) return;
+
+      requestAnimationFrame(() => {
+        cards.forEach((card) => {
+          fitProductTitles(card);
+
+          // Карточка уже обработана — больше её не пересчитываем
+          observer.unobserve(card);
+        });
       });
     },
-    { rootMargin: "350px 0px" },
+    {
+      rootMargin: "250px 0px",
+    },
   );
 
   document.querySelectorAll(".product").forEach((card) => {
@@ -1933,7 +1944,7 @@ async function getPersistentSheetPng(cacheKey, orderId) {
       type: blob.type || "image/png",
     });
   } catch (error) {
-    console.warn("Сохраненный PNG не удалось прочитать из кэша", error);
+    console.warn("Сохранённый PNG не удалось прочитать из кэша", error);
     return null;
   }
 }
