@@ -860,7 +860,7 @@ body {
     box-shadow 0.12s ease,
     filter 0.12s ease;
 
-    contain: layout paint;
+    contain: layout;
 
 }
 
