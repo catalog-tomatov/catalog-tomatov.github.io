@@ -2607,7 +2607,7 @@ canvas {
 }
 
 .catalog-closed img {
-  width: 180px;
+  width: 160px;
 
   max-width: 60vw;
 
@@ -2615,7 +2615,7 @@ canvas {
 }
 
 .catalog-closed h2 {
-  margin: 0 0 14px;
+  margin: 0 0 4px;
 
   color: var(--color-primary);
 
@@ -2625,7 +2625,7 @@ canvas {
 }
 
 .catalog-closed p {
-  margin: 8px 0;
+  margin: 6px 0;
 
   color: #7b6b5d;
 
@@ -2653,6 +2653,7 @@ canvas {
   font-weight: 800;
   line-height: 1.2;
   text-decoration: none;
+  letter-spacing: 1px;
   touch-action: manipulation;
   transition: transform 0.12s ease, background-color 0.18s ease;
 }
