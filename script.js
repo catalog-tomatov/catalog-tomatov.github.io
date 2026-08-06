@@ -10,14 +10,12 @@ const CATALOG_API_URL =
   "https://script.google.com/macros/s/AKfycbwAIYzIGkeGriT_B4Z1M58oK1xqexMiyDpE4eGnQTTQt-CeJwbeh_vkqXMXipE1END2/exec";
 const CATALOG_CACHE_KEY = "tomatoCatalogCacheV1";
 const CATALOG_CLIENT_LOOKUP_VERSION = "v2-2026-08-06";
-const CATALOG_CACHE_TTL = 5 * 60 * 1000;
-const CATALOG_VISIBLE_REFRESH_INTERVAL = 10 * 60 * 1000;
-const CATALOG_RESUME_REFRESH_AFTER = 5 * 60 * 1000;
-const CATALOG_REFRESH_RETRY_DELAY = 60 * 1000;
+const CATALOG_CACHE_TTL = 60 * 1000;
+const CATALOG_VISIBLE_REFRESH_INTERVAL = 60 * 1000;
+const CATALOG_RESUME_REFRESH_AFTER = 0;
 
 let catalogReady = false;
 let catalogLastSuccessfulRefreshAt = 0;
-let catalogLastRefreshAttemptAt = 0;
 let catalogRefreshPromise = null;
 let catalogLastLoadSource = "none";
 
@@ -590,6 +588,12 @@ function showCatalogSeasonClosed(fromSubmission = false) {
   if (fromSubmission) {
     showToast("Сезон закрыт. Заказ не был отправлен");
   }
+}
+
+function showCatalogSeasonOpen() {
+  document.getElementById("catalog").style.removeProperty("display");
+  document.getElementById("catalogClosed").style.display = "none";
+  document.querySelector(".header")?.classList.remove("season-closed");
 }
 
 const catalogPdfLink = document.getElementById("catalogPdfLink");
@@ -3438,20 +3442,19 @@ loadCatalogData()
   });
 
 async function refreshCatalogInBackground({ minimumAge = 0 } = {}) {
-  if (!catalogReady || document.hidden || orderSending) return null;
-  if (document.querySelector(".header")?.classList.contains("season-closed")) {
-    return null;
-  }
+  const seasonClosed = document
+    .querySelector(".header")
+    ?.classList.contains("season-closed");
+
+  if (document.hidden || orderSending) return null;
+  if (!catalogReady && !seasonClosed) return null;
 
   const now = Date.now();
 
   if (now - catalogLastSuccessfulRefreshAt < minimumAge) return null;
-  if (now - catalogLastRefreshAttemptAt < CATALOG_REFRESH_RETRY_DELAY) {
-    return catalogRefreshPromise;
-  }
+
   if (catalogRefreshPromise) return catalogRefreshPromise;
 
-  catalogLastRefreshAttemptAt = now;
   catalogRefreshPromise = (async () => {
     const data = await loadCatalogData({ forceNetwork: true });
 
@@ -3475,6 +3478,8 @@ async function refreshCatalogInBackground({ minimumAge = 0 } = {}) {
       return null;
     }
 
+    if (seasonClosed) showCatalogSeasonOpen();
+    catalogReady = true;
     catalogLastSuccessfulRefreshAt = Date.now();
     return syncResult;
   })()
@@ -3490,9 +3495,7 @@ async function refreshCatalogInBackground({ minimumAge = 0 } = {}) {
 }
 
 setInterval(() => {
-  void refreshCatalogInBackground({
-    minimumAge: CATALOG_VISIBLE_REFRESH_INTERVAL,
-  });
+  void refreshCatalogInBackground();
 }, CATALOG_VISIBLE_REFRESH_INTERVAL);
 
 document.addEventListener("visibilitychange", () => {
@@ -3505,7 +3508,6 @@ window.addEventListener("pageshow", () => {
 });
 
 window.addEventListener("online", () => {
-  catalogLastRefreshAttemptAt = 0;
   void refreshCatalogInBackground();
 });
 
