@@ -2619,7 +2619,7 @@ canvas {
 
   color: var(--color-primary);
 
-  font-size: 32px;
+  font-size: 30px;
 
   font-weight: 800;
 }
@@ -2642,7 +2642,7 @@ canvas {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 40px;
+  min-height: 30px;
   margin-top: 18px;
   padding: 0 22px;
   border: 2px solid #4f8a2f;
