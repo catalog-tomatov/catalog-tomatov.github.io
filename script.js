@@ -10,6 +10,14 @@ const CATALOG_API_URL =
   "https://script.google.com/macros/s/AKfycbwAIYzIGkeGriT_B4Z1M58oK1xqexMiyDpE4eGnQTTQt-CeJwbeh_vkqXMXipE1END2/exec";
 const CATALOG_CACHE_KEY = "tomatoCatalogCacheV1";
 const CATALOG_CACHE_TTL = 5 * 60 * 1000;
+const CATALOG_VISIBLE_REFRESH_INTERVAL = 10 * 60 * 1000;
+const CATALOG_RESUME_REFRESH_AFTER = 5 * 60 * 1000;
+const CATALOG_REFRESH_RETRY_DELAY = 60 * 1000;
+
+let catalogReady = false;
+let catalogLastSuccessfulRefreshAt = 0;
+let catalogLastRefreshAttemptAt = 0;
+let catalogRefreshPromise = null;
 
 const SAVED_ORDERS_KEY = "savedOrders";
 const SAVED_ORDERS_LIMIT = 10;
@@ -300,6 +308,13 @@ async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 12000) {
     }
 
     return await response.json();
+  } catch (error) {
+    if (error && error.name === "AbortError") {
+      const timeoutError = new Error("Сервер отвечает слишком долго");
+      timeoutError.code = "REQUEST_TIMEOUT";
+      throw timeoutError;
+    }
+    throw error;
   } finally {
     clearTimeout(timeoutId);
   }
@@ -329,15 +344,26 @@ function writeCatalogCache(data) {
   }
 }
 
-async function loadCatalogData() {
-  const freshCache = readCatalogCache();
-  if (freshCache) return freshCache;
+async function loadCatalogData({ forceNetwork = false } = {}) {
+  if (!forceNetwork) {
+    const freshCache = readCatalogCache();
+    if (freshCache) return freshCache;
+  }
 
   try {
-    const data = await fetchJsonWithTimeout(CATALOG_API_URL, {}, 12000);
+    const refreshUrl = forceNetwork
+      ? `${CATALOG_API_URL}?refresh=${Date.now()}`
+      : CATALOG_API_URL;
+    const data = await fetchJsonWithTimeout(
+      refreshUrl,
+      forceNetwork ? { cache: "no-store" } : {},
+      12000,
+    );
     writeCatalogCache(data);
     return data;
   } catch (error) {
+    if (forceNetwork) throw error;
+
     const fallbackCache = readCatalogCache(true);
     if (fallbackCache) return fallbackCache;
     throw error;
@@ -367,6 +393,144 @@ const cartBox = document.querySelector(".cart-box");
 const checkoutBox = document.querySelector(".checkout-box");
 
 const sheetBox = document.querySelector(".sheet-box");
+
+const accessibleDialogs = [
+  "cartModal",
+  "checkoutModal",
+  "clientModal",
+  "orderSelectModal",
+  "orderLabelModal",
+  "savedOrdersModal",
+  "sheetModal",
+  "popup",
+]
+  .map((id) => document.getElementById(id))
+  .filter(Boolean);
+
+const dialogFocusReturn = new WeakMap();
+let activeAccessibleDialog = null;
+
+function isDialogVisible(dialog) {
+  return !dialog.hidden && getComputedStyle(dialog).display !== "none";
+}
+
+function getTopVisibleDialog() {
+  return accessibleDialogs.filter(isDialogVisible).at(-1) || null;
+}
+
+function getDialogFocusables(dialog) {
+  return Array.from(
+    dialog.querySelectorAll(
+      'button:not([disabled]), input:not([disabled]):not([type="hidden"]), [href], [tabindex]:not([tabindex="-1"]), [role="button"]',
+    ),
+  ).filter((element) => {
+    const style = getComputedStyle(element);
+    return !element.hidden && style.display !== "none" && style.visibility !== "hidden";
+  });
+}
+
+function getPreferredDialogFocus(dialog) {
+  const preferredById = {
+    cartModal: "cartBackBtn",
+    checkoutModal: "clientName",
+    clientModal: "newOrderBtn",
+    orderSelectModal: "closeOrderSelectBtn",
+    orderLabelModal: "orderLabelInput",
+    savedOrdersModal: "closeSavedOrdersBtn",
+    sheetModal: "saveBtn",
+    popup: "popupBack",
+  };
+
+  const preferred = document.getElementById(preferredById[dialog.id]);
+  if (preferred && getComputedStyle(preferred).display !== "none") return preferred;
+  return getDialogFocusables(dialog)[0] || dialog;
+}
+
+function syncDialogAccessibility() {
+  const topDialog = getTopVisibleDialog();
+
+  accessibleDialogs.forEach((dialog) => {
+    dialog.setAttribute("aria-hidden", isDialogVisible(dialog) ? "false" : "true");
+  });
+
+  if (topDialog === activeAccessibleDialog) return;
+
+  const previousDialog = activeAccessibleDialog;
+  activeAccessibleDialog = topDialog;
+
+  if (topDialog) {
+    if (!dialogFocusReturn.has(topDialog)) {
+      dialogFocusReturn.set(topDialog, document.activeElement);
+    }
+
+    requestAnimationFrame(() => getPreferredDialogFocus(topDialog)?.focus());
+    return;
+  }
+
+  if (previousDialog) {
+    const returnTarget = dialogFocusReturn.get(previousDialog);
+    dialogFocusReturn.delete(previousDialog);
+    const fallback = document.getElementById("openCartBtn");
+    requestAnimationFrame(() => {
+      const target = returnTarget && document.contains(returnTarget)
+        ? returnTarget
+        : fallback;
+      target?.focus();
+    });
+  }
+}
+
+function closeTopDialogFromKeyboard(dialog) {
+  if (dialog.id === "cartModal") document.getElementById("cartBackBtn").click();
+  else if (dialog.id === "checkoutModal") document.getElementById("checkoutBackBtn").click();
+  else if (dialog.id === "popup") document.getElementById("popupBack").click();
+  else if (dialog.id === "savedOrdersModal") document.getElementById("closeSavedOrdersBtn").click();
+  else if (dialog.id === "orderSelectModal") document.getElementById("closeOrderSelectBtn").click();
+  else if (dialog.id === "orderLabelModal") document.getElementById("closeOrderLabelModal").click();
+  else if (dialog.id === "clientModal") {
+    dialog.style.display = "none";
+    checkoutModal.style.display = "flex";
+    lockBody();
+  } else if (dialog.id === "sheetModal" && savedSheetMode) {
+    document.getElementById("closeSavedOrderCardBtn").click();
+  }
+}
+
+document.addEventListener("keydown", (event) => {
+  const dialog = getTopVisibleDialog();
+  if (!dialog) return;
+
+  if (event.key === "Escape") {
+    if (orderSending) return;
+    event.preventDefault();
+    closeTopDialogFromKeyboard(dialog);
+    return;
+  }
+
+  if (event.key !== "Tab") return;
+  const focusables = getDialogFocusables(dialog);
+
+  if (!focusables.length) return;
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+});
+
+const dialogObserver = new MutationObserver(syncDialogAccessibility);
+accessibleDialogs.forEach((dialog) => {
+  dialogObserver.observe(dialog, {
+    attributes: true,
+    attributeFilter: ["style", "hidden"],
+  });
+});
+syncDialogAccessibility();
 
 function isSeasonClosedResponse(data) {
   return Boolean(
@@ -453,7 +617,7 @@ function syncProductCardsFromCart() {
 
     card.classList.toggle("in-cart", inCart > 0);
     button.classList.remove("added");
-    button.textContent = "Добавить";
+    button.textContent = inCart > 0 ? "+ Ещё" : "Добавить";
     button.setAttribute(
       "aria-label",
       inCart > 0 ? "Добавить ещё. В корзине " + inCart : "Добавить в корзину",
@@ -468,6 +632,151 @@ function syncProductCardsFromCart() {
       card.setDisplayedQuantity(inCart > 0 ? inCart : 1);
     }
   });
+}
+
+function getCatalogProductsFromResponse(data) {
+  if (Array.isArray(data)) return data;
+  if (data && Array.isArray(data.products)) return data.products;
+  return null;
+}
+
+function getCatalogSignature(list) {
+  return JSON.stringify(
+    (list || []).map((product) => [
+      String(product.id),
+      String(product.title || ""),
+      String(product.description || ""),
+      String(product.image || ""),
+      Number(product.price) || 0,
+      product.available === true,
+      product.isHit === true,
+      product.isNew === true,
+    ]),
+  );
+}
+
+function syncCartWithCatalog(nextProducts) {
+  const freshById = new Map(
+    nextProducts.map((product) => [String(product.id), product]),
+  );
+  const removed = [];
+  const priceChanges = [];
+
+  cart = cart.flatMap((item) => {
+    const fresh = freshById.get(String(item.id));
+
+    if (!fresh || fresh.available !== true) {
+      removed.push(String(item.title || item.id));
+      return [];
+    }
+
+    const previousPrice = Number(item.price) || 0;
+    const nextPrice = Number(fresh.price) || 0;
+
+    if (previousPrice !== nextPrice) {
+      priceChanges.push({
+        title: String(fresh.title || item.title || item.id),
+        previousPrice,
+        nextPrice,
+      });
+    }
+
+    return [
+      {
+        ...fresh,
+        qty: Math.max(1, Number(item.qty) || 1),
+      },
+    ];
+  });
+
+  updateCart();
+  return { removed, priceChanges };
+}
+
+function notifyCatalogCartChanges({ removed, priceChanges }) {
+  const messages = [];
+
+  if (removed.length === 1) {
+    messages.push(`Сорт «${removed[0]}» закончился и удалён из корзины`);
+  } else if (removed.length > 1) {
+    messages.push(`Закончились сорта и удалены из корзины: ${removed.length}`);
+  }
+
+  if (priceChanges.length === 1) {
+    const change = priceChanges[0];
+    messages.push(
+      `Цена «${change.title}» обновилась: ` +
+        `${change.previousPrice.toLocaleString("ru-RU")} → ` +
+        `${change.nextPrice.toLocaleString("ru-RU")} ₽`,
+    );
+  } else if (priceChanges.length > 1) {
+    messages.push(`Цены в корзине обновились: ${priceChanges.length}`);
+  }
+
+  if (messages.length) showToast(`🍅 ${messages.join(". ")}`);
+}
+
+function captureCatalogViewport() {
+  const firstVisibleCard = Array.from(document.querySelectorAll(".product")).find(
+    (card) => {
+      if (card.style.display === "none") return false;
+      const rect = card.getBoundingClientRect();
+      return rect.bottom > 0 && rect.top < window.innerHeight;
+    },
+  );
+
+  return {
+    scrollY: window.scrollY,
+    productId: firstVisibleCard?.dataset.productId || "",
+    offsetTop: firstVisibleCard?.getBoundingClientRect().top || 0,
+  };
+}
+
+function restoreCatalogViewport(viewport) {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const anchor = viewport.productId
+        ? Array.from(document.querySelectorAll(".product")).find(
+            (card) => card.dataset.productId === viewport.productId,
+          )
+        : null;
+
+      if (anchor && anchor.style.display !== "none") {
+        const delta = anchor.getBoundingClientRect().top - viewport.offsetTop;
+        window.scrollTo({ top: Math.max(0, window.scrollY + delta), behavior: "auto" });
+        return;
+      }
+
+      window.scrollTo({ top: viewport.scrollY, behavior: "auto" });
+    });
+  });
+}
+
+function applyCatalogProducts(
+  nextProducts,
+  { notify = false, preserveViewport = false } = {},
+) {
+  const previousSignature = getCatalogSignature(products);
+  const nextSignature = getCatalogSignature(nextProducts);
+  const viewport = preserveViewport ? captureCatalogViewport() : null;
+
+  products = nextProducts;
+  const cartChanges = syncCartWithCatalog(products);
+  const catalogChanged = previousSignature !== nextSignature;
+
+  if (catalogChanged || !catalog.children.length) {
+    renderProducts();
+    applyProductSearch();
+  }
+
+  if (viewport && catalogChanged) restoreCatalogViewport(viewport);
+  if (notify) notifyCatalogCartChanges(cartChanges);
+
+  return {
+    catalogChanged,
+    availableCount: products.filter((product) => product.available === true).length,
+    ...cartChanges,
+  };
 }
 
 /* PRODUCTS */
@@ -675,8 +984,11 @@ function renderProducts() {
   catalog.innerHTML = "";
 
   const fragment = document.createDocumentFragment();
+  const availableProducts = products.filter(
+    (product) => product.available === true,
+  );
 
-  products.forEach((product, productIndex) => {
+  availableProducts.forEach((product, productIndex) => {
     const isHit = product.isHit || product.title.includes("[hit]");
 
     const isNew = product.isNew || product.title.includes("[new]");
@@ -709,13 +1021,13 @@ ${isNew ? "new новинка" : ""}
     card.innerHTML = `
 
   <div class="product-number">
-    ${product.id}
+    ${escapeHtml(product.id)}
   </div>
 
   <div class="product-image">
 
   <img
-    src="${product.image}"
+    src="${escapeHtml(product.image)}"
     alt="${escapeHtml(product.title)}"
     width="104"
     height="116"
@@ -729,7 +1041,7 @@ ${isNew ? "new новинка" : ""}
   <div class="product-info">
 
    <div class="product-title">
-  ${cleanTitle}
+  ${escapeHtml(cleanTitle)}
 </div>
 
 ${isHit ? '<div class="badge-hit">🔥ХИТ</div>' : ""}
@@ -742,7 +1054,7 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
   <div class="product-right">
 
     <div class="product-price">
-      ${product.price} ₽
+      ${escapeHtml(product.price)} ₽
     </div>
 
     <div class="controls">
@@ -1042,11 +1354,11 @@ function updateCart() {
     tomatoLevel = currentLevel;
   }
 
-  document.getElementById("cartCount").innerHTML = `${totalItems} пак.`;
+  document.getElementById("cartCount").textContent = `${totalItems} пак.`;
 
   const cartPrice = document.getElementById("cartPrice");
 
-  cartPrice.innerHTML = `${totalPrice.toLocaleString("ru-RU")} ₽`;
+  cartPrice.textContent = `${totalPrice.toLocaleString("ru-RU")} ₽`;
 
   cartPrice.classList.remove("price-pop");
 
@@ -1054,21 +1366,20 @@ function updateCart() {
 
   cartPrice.classList.add("price-pop");
 
-  document.getElementById("cartPrice").innerHTML =
+  document.getElementById("cartPrice").textContent =
     `${totalPrice.toLocaleString("ru-RU")} ₽`;
 
-  document.getElementById("cartFooterCount").innerHTML = `${totalItems} пак.`;
+  document.getElementById("cartFooterCount").textContent = `${totalItems} пак.`;
 
-  document.getElementById("cartFooterPrice").innerHTML =
+  document.getElementById("cartFooterPrice").textContent =
     `${totalPrice.toLocaleString("ru-RU")} ₽`;
 
   const checkoutBtn = document.getElementById("checkoutBtn");
 
-  if (cart.length === 0) {
-    checkoutBtn.classList.add("disabled-btn");
-  } else {
-    checkoutBtn.classList.remove("disabled-btn");
-  }
+  const isCartEmpty = cart.length === 0;
+  checkoutBtn.disabled = isCartEmpty;
+  checkoutBtn.classList.toggle("disabled-btn", isCartEmpty);
+  checkoutBtn.setAttribute("aria-disabled", isCartEmpty ? "true" : "false");
 
   renderCart();
   syncProductCardsFromCart();
@@ -1093,7 +1404,7 @@ function renderCart() {
     div.innerHTML = `
 
       <div>
-        ${item.id} ${item.title}
+        ${escapeHtml(item.id)} ${escapeHtml(item.title)}
       </div>
 
       <div class="cart-controls">
@@ -1103,7 +1414,7 @@ function renderCart() {
         </button>
 
         <span class="cart-qty">
-        ${item.qty}
+        ${Number(item.qty) || 0}
         </span>
 
         <button class="plus" aria-label="Увеличить количество">
@@ -1165,6 +1476,7 @@ document.getElementById("openCartBtn").onclick = () => {
 
 document.getElementById("checkoutBtn").onclick = () => {
   vibrate(20);
+  if (!foundClient) setCheckoutIdentityFieldsVisible(true);
   cartBox.classList.add("modal-hide");
 
   setTimeout(() => {
@@ -1203,13 +1515,7 @@ async function submitOrder() {
   const pickupPoint = document.getElementById("pickupPoint");
 
   if (foundClient) {
-    document.getElementById("clientName").style.display = "none";
-
-    document.getElementById("clientPhone").style.display = "none";
-
-    document.getElementById("pickupTrigger").style.display = "none";
-
-    document.getElementById("pvzAddress").style.display = "none";
+    setCheckoutIdentityFieldsVisible(false);
   }
 
   btn.classList.add("loading-btn");
@@ -1237,10 +1543,11 @@ document.body.appendChild(blocker);
 
   let phone = phoneInput.value.trim();
 
-  let pickupText =
-    pickupPoint.value === "ozon"
-      ? `Ozon • ${pvzAddress.value}`
-      : pickupPoint.options[pickupPoint.selectedIndex].text;
+  const selectedPickupName =
+    pickupPoint.selectedOptions[0]?.textContent.trim() || "";
+  let pickupText = pickupRequiresAddress()
+    ? `${selectedPickupName} • ${pvzAddress.value.trim()}`
+    : selectedPickupName;
 
   if (foundClient) {
   name = foundClient.name;
@@ -1283,17 +1590,10 @@ document.body.appendChild(blocker);
   const clientRequestId = getOrCreateClientRequestId(orderPayload);
   orderPayload.clientRequestId = clientRequestId;
 
-  fetch(CATALOG_API_URL, {
+  fetchJsonWithTimeout(CATALOG_API_URL, {
     method: "POST",
     body: JSON.stringify(orderPayload),
-  })
-    .then((res) => {
-      if (!res.ok) {
-        throw new Error("HTTP " + res.status);
-      }
-
-      return res.json();
-    })
+  }, 20000)
     .then((result) => {
       if (isSeasonClosedResponse(result)) {
         const seasonError = new Error("Сезон закрыт");
@@ -1310,10 +1610,16 @@ document.body.appendChild(blocker);
       }
 
       const orderId = result.orderId;
-      const serverTotal = Number(result.total);
-      const confirmedTotalPrice = Number.isFinite(serverTotal)
-        ? serverTotal
+      const serverAddedTotal = Number(result.addedTotal ?? result.total);
+      const confirmedTotalPrice = Number.isFinite(serverAddedTotal)
+        ? serverAddedTotal
         : totalPrice;
+      const serverOrderTotal = Number(result.orderTotal);
+      const confirmedOrderTotal = Number.isFinite(serverOrderTotal)
+        ? serverOrderTotal
+        : orderMode === "addon"
+          ? null
+          : confirmedTotalPrice;
 
       lastOrderId = orderId;
       const copyOrderIdBtn = document.getElementById("copyOrderIdBtn");
@@ -1350,10 +1656,13 @@ document.body.appendChild(blocker);
     </div>
   `;
 
-      document.getElementById("sheetTotal").innerHTML =
-        `${confirmedTotalPrice.toLocaleString("ru-RU")} ₽`;
+      setSheetAddonSummary({
+        isAddon: orderMode === "addon",
+        addedTotal: confirmedTotalPrice,
+        orderTotal: confirmedOrderTotal,
+      });
 
-      document.getElementById("sheetTotalItems").innerHTML = `${totalItems} п`;
+      document.getElementById("sheetTotalItems").textContent = `${totalItems} п`;
 
       try {
         saveOrderSnapshot({
@@ -1395,6 +1704,9 @@ document.body.appendChild(blocker);
           total: `${confirmedTotalPrice.toLocaleString("ru-RU")} ₽`,
           totalItems: `${totalItems} п`,
           orderId: orderId,
+          mode: orderMode,
+          addedTotal: confirmedTotalPrice,
+          orderTotal: confirmedOrderTotal,
           items: submittedItems,
         }),
       );
@@ -1528,10 +1840,18 @@ document.body.appendChild(blocker);
       btn.innerHTML = "Повторить";
 
       if (orderSubmitError) {
+        orderSubmitError.textContent =
+          err && err.code === "REQUEST_TIMEOUT"
+            ? "Сервер отвечает дольше обычного. Корзина сохранена — нажмите «Повторить»."
+            : "Сервер не ответил. Корзина сохранена — нажмите «Повторить».";
         orderSubmitError.hidden = false;
       }
 
-      showToast("⚠️ Google временно не ответил. Корзина сохранена");
+      showToast(
+        err && err.code === "REQUEST_TIMEOUT"
+          ? "⚠️ Ответ задерживается. Корзина сохранена"
+          : "⚠️ Google временно не ответил. Корзина сохранена",
+      );
     });
 }
 
@@ -1539,6 +1859,7 @@ document.body.appendChild(blocker);
 
 document.getElementById("createOrderBtn").onclick = async () => {
   if (orderSending) return;
+  if (!validateCheckoutForm()) return;
   orderSending = true;
 
   const btn = document.getElementById("createOrderBtn");
@@ -1558,66 +1879,6 @@ document.getElementById("createOrderBtn").onclick = async () => {
 
   const pickupPoint = document.getElementById("pickupPoint");
 
-  // RESET
-
-  nameInput.classList.remove("input-error");
-
-  phoneInput.classList.remove("input-error");
-
-  pickupPoint.classList.remove("input-error");
-
-  let hasError = false;
-
-  // NAME
-
-  const nameRegex = /^[A-Za-zА-Яа-яЁё\s-]+$/;
-
-  if (!nameInput.value.trim() || !nameRegex.test(nameInput.value.trim())) {
-    nameInput.classList.add("input-error");
-
-    hasError = true;
-  }
-
-  // PHONE
-
-  const phoneRegex = /^\+7 \(\d{3}\) \d{3}-\d{2}-\d{2}$/;
-
-  if (!phoneInput.value.trim() || !phoneRegex.test(phoneInput.value.trim())) {
-    phoneInput.classList.add("input-error");
-
-    hasError = true;
-  }
-
-  // PICKUP
-
-  if (!pickupPoint.value) {
-    pickupTrigger.classList.add("input-error");
-
-    hasError = true;
-  }
-
-  /* PVZ */
-
-  const pvzInput = document.getElementById("pvzAddress");
-
-  if (pickupPoint.value === "ozon" && !pvzInput.value.trim()) {
-    pvzInput.classList.add("input-error");
-
-    hasError = true;
-  }
-
-  if (hasError) {
-    btn.classList.remove("loading-btn");
-
-    btn.disabled = false;
-  btn.removeAttribute("aria-busy");
-
-  btn.innerHTML = "Создать заказ";
-
-    orderSending = false;
-
-    return;
-  }
 
   const phone = phoneInput.value.trim().replace(/\D/g, "");
 
@@ -1849,11 +2110,9 @@ pickupTrigger.textContent = "Выберите точку выдачи";
 pickupMenu.classList.remove("open");
 
 pickupPoint.addEventListener("change", () => {
-  if (pickupPoint.value === "ozon") {
-    pvzAddress.style.display = "block";
-  } else {
-    pvzAddress.style.display = "none";
-  }
+  syncPickupMenuSelection();
+  setPvzAddressVisibility();
+  if (pickupPoint.value) clearCheckoutFieldError(pickupTrigger);
 });
 
 const nameInput = document.getElementById("clientName");
@@ -1873,6 +2132,180 @@ let orderMode = "normal";
 let orderLabel = "";
 
 let orderSending = false;
+
+const pvzAddressField = document.getElementById("pvzAddressField");
+
+const checkoutErrorTargets = new Map([
+  [nameInput, document.getElementById("clientNameError")],
+  [phoneInput, document.getElementById("clientPhoneError")],
+  [pickupTrigger, document.getElementById("pickupPointError")],
+  [pvzAddress, document.getElementById("pvzAddressError")],
+]);
+
+function setCheckoutFieldError(control, message) {
+  const error = checkoutErrorTargets.get(control);
+  control.classList.add("input-error");
+  control.setAttribute("aria-invalid", "true");
+  control.closest(".checkout-field, .pickup-dropdown")?.classList.add("has-error");
+  if (error) error.textContent = message;
+}
+
+function clearCheckoutFieldError(control) {
+  const error = checkoutErrorTargets.get(control);
+  control.classList.remove("input-error");
+  control.removeAttribute("aria-invalid");
+  control.closest(".checkout-field, .pickup-dropdown")?.classList.remove("has-error");
+  if (error) error.textContent = "";
+}
+
+function pickupRequiresAddress() {
+  return pickupPoint.selectedOptions[0]?.dataset.requiresAddress === "true";
+}
+
+function setPvzAddressVisibility() {
+  const requiresAddress = pickupRequiresAddress();
+  pvzAddressField.hidden = !requiresAddress;
+  pvzAddress.style.removeProperty("display");
+  if (!requiresAddress) clearCheckoutFieldError(pvzAddress);
+}
+
+function validateCheckoutForm() {
+  [nameInput, phoneInput, pickupTrigger, pvzAddress].forEach(clearCheckoutFieldError);
+
+  const errors = [];
+  const name = nameInput.value.trim();
+  const nameRegex = /^[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё\s.'’\-]*$/;
+  const phoneDigits = phoneInput.value.replace(/\D/g, "");
+
+  if (name.length < 2 || name.length > 120 || !nameRegex.test(name)) {
+    errors.push([nameInput, "Укажите имя буквами"]);
+  }
+
+  if (phoneDigits.length !== 11 || phoneDigits[0] !== "7") {
+    errors.push([phoneInput, "Введите номер полностью"]);
+  }
+
+  if (!pickupPoint.value) {
+    errors.push([pickupTrigger, "Выберите точку выдачи"]);
+  }
+
+  if (pickupRequiresAddress() && !pvzAddress.value.trim()) {
+    errors.push([pvzAddress, "Укажите адрес пункта выдачи"]);
+  }
+
+  errors.forEach(([control, message]) => setCheckoutFieldError(control, message));
+
+  if (errors.length > 0) {
+    errors[0][0].focus({ preventScroll: false });
+    return false;
+  }
+
+  return true;
+}
+
+function setCheckoutIdentityFieldsVisible(visible) {
+  document.getElementById("clientNameField").hidden = !visible;
+  document.getElementById("clientPhoneField").hidden = !visible;
+  document.querySelector(".pickup-dropdown").hidden = !visible;
+  if (visible) {
+    setPvzAddressVisibility();
+  } else {
+    pvzAddressField.hidden = true;
+  }
+}
+
+function getPickupMenuOptions() {
+  return Array.from(pickupMenu.querySelectorAll(".pickup-option"));
+}
+
+function syncPickupMenuSelection() {
+  const selected = pickupPoint.selectedOptions[0];
+  pickupTrigger.textContent = selected && selected.value
+    ? selected.textContent.trim()
+    : "Выберите точку выдачи";
+
+  getPickupMenuOptions().forEach((option) => {
+    option.setAttribute(
+      "aria-selected",
+      option.dataset.value === pickupPoint.value ? "true" : "false",
+    );
+  });
+}
+
+function setPickupMenuOpen(open, focusOption = false) {
+  pickupMenu.classList.toggle("open", open);
+  pickupTrigger.setAttribute("aria-expanded", open ? "true" : "false");
+
+  if (open && focusOption) {
+    const options = getPickupMenuOptions();
+    const selected = options.find((option) => option.dataset.value === pickupPoint.value);
+    (selected || options[0])?.focus();
+  }
+}
+
+function initializePickupDropdown() {
+  pickupMenu.replaceChildren();
+
+  Array.from(pickupPoint.options)
+    .filter((option) => option.value && !option.disabled)
+    .forEach((sourceOption) => {
+      const option = document.createElement("button");
+      option.type = "button";
+      option.className = "pickup-option";
+      option.dataset.value = sourceOption.value;
+      option.textContent = sourceOption.textContent.trim();
+      option.setAttribute("role", "option");
+      option.setAttribute("aria-selected", "false");
+
+      option.addEventListener("click", () => {
+        pickupPoint.value = option.dataset.value;
+        pickupPoint.dispatchEvent(new Event("change", { bubbles: true }));
+        setPickupMenuOpen(false);
+        pickupTrigger.focus();
+      });
+
+      option.addEventListener("keydown", (event) => {
+        const options = getPickupMenuOptions();
+        const currentIndex = options.indexOf(option);
+
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          const direction = event.key === "ArrowDown" ? 1 : -1;
+          options[(currentIndex + direction + options.length) % options.length]?.focus();
+        } else if (event.key === "Home" || event.key === "End") {
+          event.preventDefault();
+          options[event.key === "Home" ? 0 : options.length - 1]?.focus();
+        } else if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          option.click();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          setPickupMenuOpen(false);
+          pickupTrigger.focus();
+        }
+      });
+
+      pickupMenu.appendChild(option);
+    });
+
+  pickupTrigger.addEventListener("click", () => {
+    setPickupMenuOpen(!pickupMenu.classList.contains("open"));
+  });
+
+  pickupTrigger.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      setPickupMenuOpen(true, true);
+    }
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".pickup-dropdown")) setPickupMenuOpen(false);
+  });
+
+  syncPickupMenuSelection();
+  setPvzAddressVisibility();
+}
 
 let cardDownloaded = false;
 
@@ -2086,12 +2519,17 @@ async function createFallbackSheetPngFile(orderId, cacheKey) {
     .filter(Boolean)
     .slice(0, 4);
 
+  const grandTotalElement = sheet.querySelector("#sheetGrandTotal");
+  const grandTotalText =
+    grandTotalElement && !grandTotalElement.hidden
+      ? sheet.querySelector("#sheetGrandTotalValue")?.textContent?.trim() || ""
+      : "";
   const columns = itemRows.length > 120 ? 4 : itemRows.length > 45 ? 3 : 2;
   const rowHeight = itemRows.length > 120 ? 46 : 54;
   const rows = Math.max(1, Math.ceil(itemRows.length / columns));
   const canvas = document.createElement("canvas");
   canvas.width = 1200;
-  canvas.height = Math.max(720, 410 + rows * rowHeight);
+  canvas.height = Math.max(720, 410 + rows * rowHeight + (grandTotalText ? 54 : 0));
 
   const context = canvas.getContext("2d", { alpha: false });
   if (!context) throw new Error("Canvas недоступен");
@@ -2182,6 +2620,17 @@ async function createFallbackSheetPngFile(orderId, cacheKey) {
     context.fillText(item.qty, x + cellWidth - 14, y + 31);
     context.textAlign = "left";
   });
+
+  if (grandTotalText) {
+    context.fillStyle = "#4f5651";
+    context.font = "700 24px Arial, sans-serif";
+    context.fillText("ВСЕГО В ЗАКАЗЕ", side, canvas.height - 76);
+    context.fillStyle = "#9b1801";
+    context.font = "800 28px Arial, sans-serif";
+    context.textAlign = "right";
+    context.fillText(grandTotalText, canvas.width - side, canvas.height - 76);
+    context.textAlign = "left";
+  }
 
   context.fillStyle = "#637069";
   context.font = "500 21px Arial, sans-serif";
@@ -2376,6 +2825,37 @@ function closeSavedOrders() {
   unlockBody();
 }
 
+function setSheetAddonSummary({
+  isAddon = false,
+  addedTotal = 0,
+  orderTotal = null,
+} = {}) {
+  const total = document.getElementById("sheetTotal");
+  const caption = document.getElementById("sheetTotalCaption");
+  const grandTotal = document.getElementById("sheetGrandTotal");
+  const grandTotalValue = document.getElementById("sheetGrandTotalValue");
+  const numericAddedTotal = Number(addedTotal) || 0;
+  const hasOrderTotal =
+    orderTotal !== null &&
+    orderTotal !== undefined &&
+    orderTotal !== "" &&
+    Number.isFinite(Number(orderTotal));
+  const numericOrderTotal = hasOrderTotal ? Number(orderTotal) : 0;
+
+  total.textContent =
+    `${isAddon ? "+" : ""}${numericAddedTotal.toLocaleString("ru-RU")} ₽`;
+  caption.hidden = !isAddon;
+
+  const showOrderTotal = isAddon && hasOrderTotal;
+  grandTotal.hidden = !showOrderTotal;
+
+  if (showOrderTotal) {
+    grandTotalValue.textContent = `${numericOrderTotal.toLocaleString("ru-RU")} ₽`;
+  } else {
+    grandTotalValue.textContent = "";
+  }
+}
+
 function fillSheetItems(items) {
   sheetItems.innerHTML = (items || [])
     .map((item) => {
@@ -2440,8 +2920,10 @@ function openSavedOrderCard(order) {
     ${escapeHtml(order.phone)}
     <div class="sheet-pickup">${escapeHtml(order.pickup)}</div>
   `;
-  document.getElementById("sheetTotal").textContent =
-    `${(Number(order.total) || 0).toLocaleString("ru-RU")} ₽`;
+  setSheetAddonSummary({
+    isAddon: false,
+    addedTotal: Number(order.total) || 0,
+  });
   document.getElementById("sheetTotalItems").textContent =
     `${Number(order.totalItems) || 0} п`;
 
@@ -2553,12 +3035,14 @@ function restoreOrderDraft() {
     pickupPoint.value = draft.pickup || "";
     pickupTrigger.textContent = draft.pickupText || "Выберите точку выдачи";
     pvzAddress.value = draft.pvz || "";
-    pvzAddress.style.display = pickupPoint.value === "ozon" ? "block" : "none";
+    syncPickupMenuSelection();
+    setPvzAddressVisibility();
   } catch (error) {
     localStorage.removeItem(ORDER_DRAFT_KEY);
   }
 }
 
+initializePickupDropdown();
 restoreOrderDraft();
 
 [nameInput, phoneInput, pvzAddress].forEach((input) => {
@@ -2573,7 +3057,7 @@ nameInput.addEventListener("input", () => {
   const nameRegex = /^[A-Za-zА-Яа-яЁё\s-]+$/;
 
   if (nameRegex.test(nameInput.value.trim())) {
-    nameInput.classList.remove("input-error");
+    clearCheckoutFieldError(nameInput);
   }
 });
 
@@ -2622,17 +3106,17 @@ phoneInput.addEventListener("input", () => {
   const phoneRegex = /^\+7 \(\d{3}\) \d{3}-\d{2}-\d{2}$/;
 
   if (phoneRegex.test(result)) {
-    phoneInput.classList.remove("input-error");
+    clearCheckoutFieldError(phoneInput);
   }
 });
 
 pickupPoint.addEventListener("change", () => {
-  pickupTrigger.classList.remove("input-error");
+  clearCheckoutFieldError(pickupTrigger);
 });
 
 pvzAddress.addEventListener("input", () => {
   if (pvzAddress.value.trim()) {
-    pvzAddress.classList.remove("input-error");
+    clearCheckoutFieldError(pvzAddress);
   }
 });
 
@@ -2798,83 +3282,18 @@ loadCatalogData()
       return;
     }
 
-    const catalogProducts = Array.isArray(data)
-      ? data
-      : data && Array.isArray(data.products)
-        ? data.products
-        : null;
+    const catalogProducts = getCatalogProductsFromResponse(data);
 
     if (!catalogProducts) {
       throw new Error("Сервер вернул некорректный каталог");
     }
 
-    products = catalogProducts;
-    const availableProducts = products.filter((p) => p.available === true);
+    const initialSync = applyCatalogProducts(catalogProducts, { notify: true });
 
-    if (availableProducts.length === 0) {
+    if (initialSync.availableCount === 0) {
       showCatalogSeasonClosed();
       return;
     }
-
-    const removed = [];
-
-    cart = cart.filter((item) => {
-      const fresh = products.find((p) => p.id == item.id);
-
-      if (!fresh || !fresh.available) {
-        removed.push(item.title);
-
-        return false;
-      }
-
-      return true;
-    });
-
-    updateCart();
-
-    if (removed.length > 0) {
-      if (removed.length === 1) {
-        showToast(`🍅 Сорт "${removed[0]}" закончился`);
-      } else {
-        showToast(`🍅 Закончились сорта (${removed.length})`);
-      }
-    }
-
-    const pickupMenu = document.getElementById("pickupMenu");
-
-    const pickupPoint = document.getElementById("pickupPoint");
-
-    pickupTrigger.addEventListener("click", () => {
-      pickupMenu.classList.toggle("open");
-    });
-
-    document.addEventListener("click", (e) => {
-
-  if (
-    !e.target.closest(".pickup-dropdown")
-  ) {
-    pickupMenu.classList.remove("open");
-  }
-
-});
-
-    document.querySelectorAll(".pickup-option").forEach((option) => {
-      option.addEventListener("click", () => {
-        const text = option.textContent.trim();
-
-        const value = option.dataset.value;
-
-        pickupTrigger.textContent = text;
-
-        pickupPoint.value = value;
-
-        pickupPoint.dispatchEvent(new Event("change"));
-
-        pickupMenu.classList.remove("open");
-      });
-    });
-
-    renderProducts();
     const [initialImages] = await Promise.all([
       waitForInitialProductImages(24, 8000),
       new Promise((resolve) => setTimeout(resolve, 2000)),
@@ -2893,6 +3312,8 @@ loadCatalogData()
 
     warmRemainingProductImages(24, 10);
     updateCart();
+    catalogReady = true;
+    catalogLastSuccessfulRefreshAt = Date.now();
 
     const loadingTomato = document.getElementById("loadingTomato");
     const loadingScreen = document.getElementById("loadingScreen");
@@ -2950,6 +3371,78 @@ loadCatalogData()
     );
   });
 
+async function refreshCatalogInBackground({ minimumAge = 0 } = {}) {
+  if (!catalogReady || document.hidden || orderSending) return null;
+  if (document.querySelector(".header")?.classList.contains("season-closed")) {
+    return null;
+  }
+
+  const now = Date.now();
+
+  if (now - catalogLastSuccessfulRefreshAt < minimumAge) return null;
+  if (now - catalogLastRefreshAttemptAt < CATALOG_REFRESH_RETRY_DELAY) {
+    return catalogRefreshPromise;
+  }
+  if (catalogRefreshPromise) return catalogRefreshPromise;
+
+  catalogLastRefreshAttemptAt = now;
+  catalogRefreshPromise = (async () => {
+    const data = await loadCatalogData({ forceNetwork: true });
+
+    if (isSeasonClosedResponse(data)) {
+      catalogReady = false;
+      showCatalogSeasonClosed();
+      return null;
+    }
+
+    const nextProducts = getCatalogProductsFromResponse(data);
+    if (!nextProducts) throw new Error("Сервер вернул некорректный каталог");
+
+    const syncResult = applyCatalogProducts(nextProducts, {
+      notify: true,
+      preserveViewport: true,
+    });
+
+    if (syncResult.availableCount === 0) {
+      catalogReady = false;
+      showCatalogSeasonClosed();
+      return null;
+    }
+
+    catalogLastSuccessfulRefreshAt = Date.now();
+    return syncResult;
+  })()
+    .catch((error) => {
+      console.warn("Фоновое обновление каталога не удалось", error);
+      return null;
+    })
+    .finally(() => {
+      catalogRefreshPromise = null;
+    });
+
+  return catalogRefreshPromise;
+}
+
+setInterval(() => {
+  void refreshCatalogInBackground({
+    minimumAge: CATALOG_VISIBLE_REFRESH_INTERVAL,
+  });
+}, CATALOG_VISIBLE_REFRESH_INTERVAL);
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  void refreshCatalogInBackground({ minimumAge: CATALOG_RESUME_REFRESH_AFTER });
+});
+
+window.addEventListener("pageshow", () => {
+  void refreshCatalogInBackground({ minimumAge: CATALOG_RESUME_REFRESH_AFTER });
+});
+
+window.addEventListener("online", () => {
+  catalogLastRefreshAttemptAt = 0;
+  void refreshCatalogInBackground();
+});
+
 setInterval(() => {
   if (document.hidden) return;
 
@@ -2965,6 +3458,9 @@ const searchInput = document.getElementById("searchInput");
 const clearSearchBtn = document.getElementById("clearSearch");
 
 const searchResultCount = document.getElementById("searchResultCount");
+const catalogEmpty = document.getElementById("catalogEmpty");
+const resetCatalogFilters = document.getElementById("resetCatalogFilters");
+
 
 let searchFrame = 0;
 
@@ -3013,8 +3509,11 @@ function applyProductSearch() {
     ? "Найдено: " + formatVarietyCount(visibleCount)
     : "";
   searchResultCount.classList.toggle("visible", hasActiveSelection);
+  catalogEmpty.hidden = !(hasActiveSelection && visibleCount === 0);
+  catalog.setAttribute("aria-busy", "false");
 
-  requestAnimationFrame(fitProductTitles);
+
+  requestAnimationFrame(() => fitProductTitles());
 }
 
 searchInput.addEventListener("input", () => {
@@ -3053,6 +3552,20 @@ clearSearchBtn.addEventListener("click", () => {
   }, 80);
 });
 
+
+resetCatalogFilters.addEventListener("click", () => {
+  searchInput.value = "";
+  activeQuickFilter = "";
+
+  document.querySelectorAll(".quick-filter").forEach((button) => {
+    button.classList.remove("active");
+    button.setAttribute("aria-pressed", "false");
+  });
+
+  clearSearchBtn.style.display = "none";
+  applyProductSearch();
+  searchInput.focus();
+});
 const backToTopBtn = document.getElementById("backToTopBtn");
 let backToTopFrame = 0;
 
@@ -3277,9 +3790,10 @@ function showOrderSelectModal() {
   list.innerHTML = "";
 
   clientOrders.forEach((order) => {
-    const card = document.createElement("div");
+    const card = document.createElement("button");
 
     card.className = "order-select-card";
+    card.type = "button";
 
     const parts = order.header.split("  ");
 
@@ -3353,10 +3867,11 @@ document.getElementById("checkoutBackBtn").onclick = () => {
 
   setTimeout(() => {
     checkoutModal.style.display = "none";
-
-    unlockBody();
-
     checkoutBox.classList.remove("modal-hide");
+    cartModal.style.display = "flex";
+    lockBody();
+    cartBox.classList.add("modal-open-medium");
+    setTimeout(() => cartBox.classList.remove("modal-open-medium"), 450);
   }, 200);
 
 };
@@ -3383,9 +3898,15 @@ if (pendingSheetData) {
 
   document.getElementById("sheetClient").innerHTML = data.client;
 
-  document.getElementById("sheetTotal").innerHTML = data.total;
+  setSheetAddonSummary({
+    isAddon: data.mode === "addon",
+    addedTotal: Number.isFinite(Number(data.addedTotal))
+      ? Number(data.addedTotal)
+      : Number(String(data.total || "").replace(/\D/g, "")) || 0,
+    orderTotal: data.orderTotal,
+  });
 
-  document.getElementById("sheetTotalItems").innerHTML = data.totalItems;
+  document.getElementById("sheetTotalItems").textContent = data.totalItems;
 
   sheetItems.innerHTML = data.items
     .map((item) => {
