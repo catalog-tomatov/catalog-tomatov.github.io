@@ -19,6 +19,7 @@ let catalogReady = false;
 let catalogLastSuccessfulRefreshAt = 0;
 let catalogLastRefreshAttemptAt = 0;
 let catalogRefreshPromise = null;
+let catalogLastLoadSource = "none";
 
 const SAVED_ORDERS_KEY = "savedOrders";
 const SAVED_ORDERS_LIMIT = 10;
@@ -346,6 +347,11 @@ function readCatalogCache(allowExpired = false) {
 
 function writeCatalogCache(data) {
   try {
+    if (isSeasonClosedResponse(data)) {
+      localStorage.removeItem(CATALOG_CACHE_KEY);
+      return;
+    }
+
     localStorage.setItem(
       CATALOG_CACHE_KEY,
       JSON.stringify({ savedAt: Date.now(), data }),
@@ -358,7 +364,10 @@ function writeCatalogCache(data) {
 async function loadCatalogData({ forceNetwork = false } = {}) {
   if (!forceNetwork) {
     const freshCache = readCatalogCache();
-    if (freshCache) return freshCache;
+    if (freshCache) {
+      catalogLastLoadSource = "fresh-cache";
+      return freshCache;
+    }
   }
 
   try {
@@ -370,13 +379,17 @@ async function loadCatalogData({ forceNetwork = false } = {}) {
       forceNetwork ? { cache: "no-store" } : {},
       12000,
     );
+    catalogLastLoadSource = "network";
     writeCatalogCache(data);
     return data;
   } catch (error) {
     if (forceNetwork) throw error;
 
     const fallbackCache = readCatalogCache(true);
-    if (fallbackCache) return fallbackCache;
+    if (fallbackCache) {
+      catalogLastLoadSource = "fallback-cache";
+      return fallbackCache;
+    }
     throw error;
   }
 }
@@ -578,6 +591,16 @@ function showCatalogSeasonClosed(fromSubmission = false) {
     showToast("Сезон закрыт. Заказ не был отправлен");
   }
 }
+
+const catalogPdfLink = document.getElementById("catalogPdfLink");
+
+catalogPdfLink?.addEventListener("click", (event) => {
+  if (catalogPdfLink.getAttribute("href") === "#") {
+    event.preventDefault();
+    showToast("PDF-каталог будет добавлен позже");
+  }
+});
+
 /* CART */
 
 let cart = [];
@@ -3307,6 +3330,8 @@ function launchTomatoCrown() {
 
 loadCatalogData()
   .then(async (data) => {
+    const initialCatalogLoadSource = catalogLastLoadSource;
+
     if (isSeasonClosedResponse(data)) {
       showCatalogSeasonClosed();
       return;
@@ -3324,10 +3349,21 @@ loadCatalogData()
       showCatalogSeasonClosed();
       return;
     }
+
+    if (initialCatalogLoadSource === "fresh-cache") {
+      catalogReady = true;
+      catalogLastSuccessfulRefreshAt = Date.now();
+      void refreshCatalogInBackground();
+    }
+
     const [initialImages] = await Promise.all([
       waitForInitialProductImages(24, 8000),
       new Promise((resolve) => setTimeout(resolve, 2000)),
     ]);
+
+    if (document.querySelector(".header")?.classList.contains("season-closed")) {
+      return;
+    }
 
     if (
       initialImages.timedOut ||
