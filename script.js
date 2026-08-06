@@ -250,6 +250,7 @@ function getOrderRequestSignature(payload) {
     pickup: payload.pickup,
     mode: payload.mode,
     selectedOrderId: payload.selectedOrderId || "",
+    selectedOrderColumn: payload.selectedOrderColumn || "",
     orderLabel: payload.orderLabel || "",
     items: (payload.items || [])
       .map((item) => ({ id: String(item.id), qty: Number(item.qty) || 0 }))
@@ -1607,6 +1608,10 @@ document.body.appendChild(blocker);
             ? String(result.error)
             : "Сервер не вернул номер заказа",
         );
+      }
+
+      if (result.mode === "addon" || result.mode === "normal") {
+        orderMode = result.mode;
       }
 
       const orderId = result.orderId;
@@ -3733,6 +3738,10 @@ document.getElementById("copyPhoneBtn").onclick = async () => {
 };
 
 newOrderBtn.onclick = () => {
+  selectedOrderId = null;
+  selectedOrderColumn = null;
+  orderMode = "normal";
+
   document.getElementById("clientModal").style.display = "none";
 
   document.getElementById("orderLabelModal").style.display = "flex";
@@ -3754,6 +3763,8 @@ document.getElementById("createLabeledOrderBtn").onclick = () => {
   orderLabel = document.getElementById("orderLabelInput").value.trim();
 
   orderMode = "normal";
+  selectedOrderId = null;
+  selectedOrderColumn = null;
 
   document.getElementById("orderLabelModal").style.display = "none";
 
