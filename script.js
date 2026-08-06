@@ -9,6 +9,7 @@ let products = [];
 const CATALOG_API_URL =
   "https://script.google.com/macros/s/AKfycbwAIYzIGkeGriT_B4Z1M58oK1xqexMiyDpE4eGnQTTQt-CeJwbeh_vkqXMXipE1END2/exec";
 const CATALOG_CACHE_KEY = "tomatoCatalogCacheV1";
+const CATALOG_CLIENT_LOOKUP_VERSION = "v2-2026-08-06";
 const CATALOG_CACHE_TTL = 5 * 60 * 1000;
 const CATALOG_VISIBLE_REFRESH_INTERVAL = 10 * 60 * 1000;
 const CATALOG_RESUME_REFRESH_AFTER = 5 * 60 * 1000;
@@ -24,8 +25,8 @@ const SAVED_ORDERS_LIMIT = 10;
 const ORDER_DRAFT_KEY = "tomatoOrderDraft";
 const PENDING_ORDER_REQUEST_KEY = "tomatoPendingOrderRequest";
 const RESET_VERSION_KEY = "tomatoResetVersion";
-const RESET_DATE = new Date("2027-05-01T00:00:00+03:00").getTime();
-const RESET_VERSION = "2027-05-01";
+const RESET_DATE = new Date("2027-06-01T00:00:00+03:00").getTime();
+const RESET_VERSION = "2027-06-01";
 
 function runScheduledStorageReset(now = Date.now()) {
   if (now < RESET_DATE) return false;
@@ -49,6 +50,7 @@ function runScheduledStorageReset(now = Date.now()) {
 }
 
 runScheduledStorageReset();
+
 let tomatoLevel = 0;
 
 let tomatoClicks = 0;
@@ -294,6 +296,14 @@ function clearClientRequestId(requestId) {
     localStorage.removeItem(PENDING_ORDER_REQUEST_KEY);
   }
 }
+function getClientLookupUrl(phone, requestTime = Date.now()) {
+  return (
+    CATALOG_API_URL +
+    "?phone=" + encodeURIComponent(phone) +
+    "&_=" + encodeURIComponent(String(requestTime))
+  );
+}
+
 async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 12000) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -1889,15 +1899,26 @@ document.getElementById("createOrderBtn").onclick = async () => {
 
   try {
     const data = await fetchJsonWithTimeout(
-      CATALOG_API_URL + "?phone=" +
-        encodeURIComponent(phone),
-      {},
+      getClientLookupUrl(phone),
+      { cache: "no-store" },
       10000,
     );
 
     if (isSeasonClosedResponse(data)) {
       showCatalogSeasonClosed(true);
       return;
+    }
+
+    if (
+      !data ||
+      Array.isArray(data) ||
+      data.lookupVersion !== CATALOG_CLIENT_LOOKUP_VERSION
+    ) {
+      const versionError = new Error(
+        "Сервер поиска клиентов не обновлён"
+      );
+      versionError.code = "CLIENT_LOOKUP_VERSION_MISMATCH";
+      throw versionError;
     }
 
     if (data.found || data["Найдено"]) {
@@ -1967,7 +1988,11 @@ document.getElementById("createOrderBtn").onclick = async () => {
     btn.removeAttribute("aria-busy");
     btn.innerHTML = "Создать заказ";
 
-    showToast("⚠️ Не удалось проверить номер. Повторите ещё раз");
+    showToast(
+      err && err.code === "CLIENT_LOOKUP_VERSION_MISMATCH"
+        ? "⚠️ Сервер каталога не обновлён. Заказ не отправлен"
+        : "⚠️ Не удалось проверить номер. Повторите ещё раз",
+    );
     return;
   }
 
