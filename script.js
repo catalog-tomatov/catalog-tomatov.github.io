@@ -12,11 +12,15 @@ const CATALOG_CACHE_KEY = "tomatoCatalogCacheV1";
 const CATALOG_CLIENT_LOOKUP_VERSION = "v2-2026-08-06";
 const CATALOG_CACHE_TTL = 60 * 1000;
 const CATALOG_VISIBLE_REFRESH_INTERVAL = 60 * 1000;
+const CATALOG_AVAILABILITY_REFRESH_INTERVAL = 10 * 1000;
+const CATALOG_REQUEST_TIMEOUT = 30 * 1000;
 const CATALOG_RESUME_REFRESH_AFTER = 0;
+const ORDER_SUBMIT_REQUEST_TIMEOUT = 25 * 1000;
 
 let catalogReady = false;
 let catalogLastSuccessfulRefreshAt = 0;
 let catalogRefreshPromise = null;
+let catalogAvailabilityRefreshPromise = null;
 let catalogLastLoadSource = "none";
 
 const SAVED_ORDERS_KEY = "savedOrders";
@@ -259,25 +263,80 @@ function getOrderRequestSignature(payload) {
   });
 }
 
-function getOrCreateClientRequestId(payload) {
-  const signature = getOrderRequestSignature(payload);
-
+function readPendingOrderRequest() {
   try {
     const pending = JSON.parse(
       localStorage.getItem(PENDING_ORDER_REQUEST_KEY) || "null",
     );
 
-    if (pending && pending.id && pending.signature === signature) {
-      return String(pending.id);
-    }
+    return pending && pending.id ? pending : null;
   } catch (error) {
     localStorage.removeItem(PENDING_ORDER_REQUEST_KEY);
+    return null;
+  }
+}
+
+function getPendingOrderPayload(pending) {
+  if (!pending) return null;
+
+  if (pending.payload && typeof pending.payload === "object") {
+    return pending.payload;
+  }
+
+  try {
+    const payload = JSON.parse(String(pending.signature || ""));
+    return payload && typeof payload === "object" ? payload : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function getComparableOrderItems(items) {
+  return (items || [])
+    .map((item) => ({ id: String(item.id), qty: Number(item.qty) || 0 }))
+    .filter((item) => item.id && item.qty > 0)
+    .sort((a, b) => a.id.localeCompare(b.id, "ru", { numeric: true }));
+}
+
+function normalizeComparablePhone(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
+function getRetryablePendingOrderRequest(phone, items) {
+  const pending = readPendingOrderRequest();
+  const payload = getPendingOrderPayload(pending);
+
+  if (!pending || !payload) return null;
+  if (
+    normalizeComparablePhone(payload.phone) !== normalizeComparablePhone(phone)
+  ) {
+    return null;
+  }
+
+  const pendingItems = JSON.stringify(getComparableOrderItems(payload.items));
+  const currentItems = JSON.stringify(getComparableOrderItems(items));
+
+  return pendingItems === currentItems ? { ...pending, payload } : null;
+}
+
+function getOrCreateClientRequestId(payload) {
+  const signature = getOrderRequestSignature(payload);
+
+  const pending = readPendingOrderRequest();
+  if (pending && pending.signature === signature) {
+    return String(pending.id);
   }
 
   const id = createClientRequestId();
   localStorage.setItem(
     PENDING_ORDER_REQUEST_KEY,
-    JSON.stringify({ id, signature, createdAt: new Date().toISOString() }),
+    JSON.stringify({
+      id,
+      signature,
+      payload: JSON.parse(signature),
+      createdAt: new Date().toISOString(),
+    }),
   );
   return id;
 }
@@ -375,7 +434,7 @@ async function loadCatalogData({ forceNetwork = false } = {}) {
     const data = await fetchJsonWithTimeout(
       refreshUrl,
       forceNetwork ? { cache: "no-store" } : {},
-      12000,
+      CATALOG_REQUEST_TIMEOUT,
     );
     catalogLastLoadSource = "network";
     writeCatalogCache(data);
@@ -676,6 +735,72 @@ function getCatalogProductsFromResponse(data) {
   if (Array.isArray(data)) return data;
   if (data && Array.isArray(data.products)) return data.products;
   return null;
+}
+
+function getCatalogAvailabilityFromResponse(data) {
+  const source = Array.isArray(data)
+    ? data
+    : data && Array.isArray(data.availability)
+      ? data.availability
+      : null;
+
+  if (!source) return null;
+
+  return new Map(
+    source.map((item) => [String(item.id), item.available === true]),
+  );
+}
+
+async function refreshCatalogAvailabilityInBackground() {
+  if (document.hidden || orderSending || !catalogReady || !products.length) {
+    return null;
+  }
+  if (catalogRefreshPromise) return catalogRefreshPromise;
+  if (catalogAvailabilityRefreshPromise) {
+    return catalogAvailabilityRefreshPromise;
+  }
+
+  catalogAvailabilityRefreshPromise = (async () => {
+    const url =
+      `${CATALOG_API_URL}?availability=1&_=${encodeURIComponent(Date.now())}`;
+    const data = await fetchJsonWithTimeout(
+      url,
+      { cache: "no-store" },
+      CATALOG_REQUEST_TIMEOUT,
+    );
+
+    if (isSeasonClosedResponse(data)) {
+      catalogReady = false;
+      showCatalogSeasonClosed();
+      return null;
+    }
+
+    const availability = getCatalogAvailabilityFromResponse(data);
+    if (!availability) {
+      throw new Error("Сервер вернул некорректную доступность сортов");
+    }
+
+    const nextProducts = products.map((product) => {
+      const id = String(product.id);
+      return availability.has(id)
+        ? { ...product, available: availability.get(id) }
+        : product;
+    });
+
+    return applyCatalogProducts(nextProducts, {
+      notify: true,
+      preserveViewport: true,
+    });
+  })()
+    .catch((error) => {
+      console.warn("Доступность сортов не обновилась", error);
+      return null;
+    })
+    .finally(() => {
+      catalogAvailabilityRefreshPromise = null;
+    });
+
+  return catalogAvailabilityRefreshPromise;
 }
 
 function getCatalogSignature(list) {
@@ -1022,11 +1147,9 @@ function renderProducts() {
   catalog.innerHTML = "";
 
   const fragment = document.createDocumentFragment();
-  const availableProducts = products.filter(
-    (product) => product.available === true,
-  );
+  const displayedProducts = products;
 
-  availableProducts.forEach((product, productIndex) => {
+  displayedProducts.forEach((product, productIndex) => {
     const isHit = product.isHit || product.title.includes("[hit]");
 
     const isNew = product.isNew || product.title.includes("[new]");
@@ -1043,6 +1166,7 @@ function renderProducts() {
     }
 
     card.dataset.productId = String(product.id);
+    card.dataset.available = product.available === true ? "true" : "false";
     card.dataset.isHit = isHit ? "true" : "false";
     card.dataset.isNew = isNew ? "true" : "false";
 
@@ -1054,6 +1178,7 @@ ${product.title}
 ${product.description}
 ${isHit ? "hit хит" : ""}
 ${isNew ? "new новинка" : ""}
+${product.available === true ? "" : "нет в наличии недоступен"}
 `);
 
     card.innerHTML = `
@@ -1085,6 +1210,8 @@ ${isNew ? "new новинка" : ""}
 ${isHit ? '<div class="badge-hit">🔥ХИТ</div>' : ""}
 
 ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
+
+${product.available === true ? "" : '<div class="badge-stock">Нет в наличии</div>'}
 
 <div class="cart-stamp" aria-live="polite" aria-hidden="true"></div>
   </div>
@@ -1255,7 +1382,7 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
     });
 
     if (!product.available) {
-      addBtn.innerHTML = "Нет<br>в наличии";
+      addBtn.textContent = "Добавить";
 
       qtyText.textContent = "0";
 
@@ -1266,6 +1393,7 @@ ${isNew ? '<div class="badge-new">⭐НОВИНКА</div>' : ""}
       minusBtn.disabled = true;
 
       card.classList.add("out-of-stock");
+      card.setAttribute("aria-disabled", "true");
     }
     /* ADD BUTTON */
 
@@ -1493,6 +1621,7 @@ function renderCart() {
 
 document.getElementById("openCartBtn").onclick = () => {
   vibrate(15);
+  void refreshCatalogAvailabilityInBackground();
 
   catalogScrollPosition = window.scrollY;
   sessionStorage.setItem("tomatoCatalogScroll", String(catalogScrollPosition));
@@ -1514,6 +1643,7 @@ document.getElementById("openCartBtn").onclick = () => {
 
 document.getElementById("checkoutBtn").onclick = () => {
   vibrate(20);
+  void refreshCatalogAvailabilityInBackground();
   if (!foundClient) setCheckoutIdentityFieldsVisible(true);
   cartBox.classList.add("modal-hide");
 
@@ -1535,7 +1665,7 @@ document.getElementById("checkoutBtn").onclick = () => {
   }, 180);
 };
 
-async function submitOrder() {
+async function submitOrder(options = {}) {
 
   if (orderSending) return;
 
@@ -1577,17 +1707,26 @@ touch-action:none;
 
 document.body.appendChild(blocker);
 
-  let name = nameInput.value.trim();
+  const pendingRequest = options.pendingRequest || null;
+  const pendingPayload = getPendingOrderPayload(pendingRequest);
 
-  let phone = phoneInput.value.trim();
+  let name = pendingPayload
+    ? String(pendingPayload.name || "").trim()
+    : nameInput.value.trim();
+
+  let phone = pendingPayload
+    ? String(pendingPayload.phone || "").trim()
+    : phoneInput.value.trim();
 
   const selectedPickupName =
     pickupPoint.selectedOptions[0]?.textContent.trim() || "";
-  let pickupText = pickupRequiresAddress()
-    ? `${selectedPickupName} • ${pvzAddress.value.trim()}`
-    : selectedPickupName;
+  let pickupText = pendingPayload
+    ? String(pendingPayload.pickup || "").trim()
+    : pickupRequiresAddress()
+      ? `${selectedPickupName} • ${pvzAddress.value.trim()}`
+      : selectedPickupName;
 
-  if (foundClient) {
+  if (foundClient && !pendingPayload) {
   name = foundClient.name;
 
   phone = formatPhone(foundClient.phone);
@@ -1595,12 +1734,21 @@ document.body.appendChild(blocker);
   pickupText = foundClient.pickup;
 }
 
-  const submittedItems = cart.map((item) => ({
-    id: item.id,
-    title: item.title,
-    price: Number(item.price) || 0,
-    qty: Number(item.qty) || 0,
-  }));
+  const payloadItems = pendingPayload ? pendingPayload.items || [] : cart;
+  const submittedItems = payloadItems.map((payloadItem) => {
+    const cartItem = cart.find(
+      (item) => String(item.id) === String(payloadItem.id),
+    );
+
+    return {
+      id: payloadItem.id,
+      title: cartItem ? cartItem.title : String(payloadItem.title || ""),
+      price: cartItem
+        ? Number(cartItem.price) || 0
+        : Number(payloadItem.price) || 0,
+      qty: Number(payloadItem.qty) || 0,
+    };
+  });
 
   const totalPrice = submittedItems.reduce((sum, item) => {
     return sum + item.price * item.qty;
@@ -1610,7 +1758,11 @@ document.body.appendChild(blocker);
     return sum + item.qty;
   }, 0);
 
-  const orderPayload = {
+  const submittedOrderLabel = pendingPayload
+    ? String(pendingPayload.orderLabel || "")
+    : orderLabel;
+
+  const orderPayload = pendingPayload ? { ...pendingPayload } : {
     name,
     phone,
     pickup: pickupText,
@@ -1625,13 +1777,21 @@ document.body.appendChild(blocker);
     total: totalPrice,
   };
 
-  const clientRequestId = getOrCreateClientRequestId(orderPayload);
+  orderPayload.items = submittedItems.map((item) => ({
+    id: item.id,
+    qty: item.qty,
+  }));
+  orderPayload.total = totalPrice;
+
+  const clientRequestId = pendingRequest
+    ? String(pendingRequest.id)
+    : getOrCreateClientRequestId(orderPayload);
   orderPayload.clientRequestId = clientRequestId;
 
   fetchJsonWithTimeout(CATALOG_API_URL, {
     method: "POST",
     body: JSON.stringify(orderPayload),
-  }, 20000)
+  }, ORDER_SUBMIT_REQUEST_TIMEOUT)
     .then((result) => {
       if (isSeasonClosedResponse(result)) {
         const seasonError = new Error("Сезон закрыт");
@@ -1685,7 +1845,7 @@ document.body.appendChild(blocker);
       document.getElementById("sheetDate").innerHTML =
         today.toLocaleDateString("ru-RU");
 
-      document.getElementById("sheetOrderLabel").textContent = orderLabel || "";
+      document.getElementById("sheetOrderLabel").textContent = submittedOrderLabel;
 
 
       document.getElementById("sheetClient").innerHTML = `
@@ -1711,7 +1871,7 @@ document.body.appendChild(blocker);
           orderId,
           title: document.getElementById("sheetTitle").textContent,
           mode: orderMode,
-          orderLabel,
+          orderLabel: submittedOrderLabel,
           name,
           phone,
           pickup: pickupText,
@@ -1724,8 +1884,6 @@ document.body.appendChild(blocker);
         });
       } catch (storageError) {
         console.error("Не удалось сохранить локальную копию заказа", storageError);
-      } finally {
-        clearClientRequestId(clientRequestId);
       }
 
       localStorage.removeItem(ORDER_DRAFT_KEY);
@@ -1784,6 +1942,7 @@ document.body.appendChild(blocker);
   </div>
 `;
       navigator.vibrate?.([80, 50, 80]);
+      clearClientRequestId(clientRequestId);
       setTimeout(() => {
         document.getElementById("loadingBlocker")?.remove();
 
@@ -1902,6 +2061,15 @@ document.body.appendChild(blocker);
 document.getElementById("createOrderBtn").onclick = async () => {
   if (orderSending) return;
   if (!validateCheckoutForm()) return;
+
+  const phone = document.getElementById("clientPhone").value.trim().replace(/\D/g, "");
+  const pendingRequest = getRetryablePendingOrderRequest(phone, cart);
+
+  if (pendingRequest) {
+    submitOrder({ pendingRequest });
+    return;
+  }
+
   orderSending = true;
 
   const btn = document.getElementById("createOrderBtn");
@@ -1921,8 +2089,6 @@ document.getElementById("createOrderBtn").onclick = async () => {
 
   const pickupPoint = document.getElementById("pickupPoint");
 
-
-  const phone = phoneInput.value.trim().replace(/\D/g, "");
 
   try {
     const data = await fetchJsonWithTimeout(
@@ -3498,6 +3664,10 @@ setInterval(() => {
   void refreshCatalogInBackground();
 }, CATALOG_VISIBLE_REFRESH_INTERVAL);
 
+setInterval(() => {
+  void refreshCatalogAvailabilityInBackground();
+}, CATALOG_AVAILABILITY_REFRESH_INTERVAL);
+
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
   void refreshCatalogInBackground({ minimumAge: CATALOG_RESUME_REFRESH_AFTER });
@@ -4056,5 +4226,3 @@ document.addEventListener("click", (e) => {
 
   press(btn);
 });
- 
-
