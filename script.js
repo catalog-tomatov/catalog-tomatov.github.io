@@ -1099,7 +1099,7 @@ function showCatalogConnectionError(message) {
       '<button type="button" onclick="location.reload()">Повторить</button>';
 
     if (loadingTomato) {
-      loadingTomato.src = "./tomato/tomato-angry-ui.png";
+      loadingTomato.src = "./tomato/tomato-angry.png";
     }
     return;
   }
@@ -1523,17 +1523,18 @@ function updateCart() {
   document.getElementById("cartCount").textContent = `${totalItems} пак.`;
 
   const cartPrice = document.getElementById("cartPrice");
+  const formattedTotalPrice = `${totalPrice.toLocaleString("ru-RU")} ₽`;
+  const priceChanged = cartPrice.textContent.trim() !== formattedTotalPrice;
 
-  cartPrice.textContent = `${totalPrice.toLocaleString("ru-RU")} ₽`;
+  cartPrice.textContent = formattedTotalPrice;
 
-  cartPrice.classList.remove("price-pop");
+  if (priceChanged) {
+    cartPrice.classList.remove("price-pop");
 
-  void cartPrice.offsetWidth;
+    void cartPrice.offsetWidth;
 
-  cartPrice.classList.add("price-pop");
-
-  document.getElementById("cartPrice").textContent =
-    `${totalPrice.toLocaleString("ru-RU")} ₽`;
+    cartPrice.classList.add("price-pop");
+  }
 
   document.getElementById("cartFooterCount").textContent = `${totalItems} пак.`;
 
@@ -3370,7 +3371,7 @@ function launchTomatoHeart() {
 
   const logoTomato = document.getElementById("logoTomato");
 
-  logoTomato.src = "./tomato/tomato-idle-closed-ui.png";
+  logoTomato.src = "./tomato/tomato-idle-closed.png";
 
   const hearts = [
     "./tomato/heart1-anim.png",
@@ -3410,7 +3411,7 @@ function launchTomatoHeart() {
   }
 
   setTimeout(() => {
-    logoTomato.src = "./tomato/tomato-idle-ui.png";
+    logoTomato.src = "./tomato/tomato-idle.png";
   }, 700);
 }
 
@@ -3427,10 +3428,10 @@ logoTomato.addEventListener("click", () => {
 
   logoTomato.classList.add("tomato-bonk");
 
-  logoTomato.src = "./tomato/tomato-angry-ui.png";
+  logoTomato.src = "./tomato/tomato-angry.png";
 
   setTimeout(() => {
-    logoTomato.src = "./tomato/tomato-idle-ui.png";
+    logoTomato.src = "./tomato/tomato-idle.png";
 
     logoTomato.classList.remove("tomato-bonk");
 
@@ -3445,7 +3446,7 @@ function launchTomatoKiss() {
 
   const logoTomato = document.getElementById("logoTomato");
 
-  logoTomato.src = "./tomato/tomato-kiss-ui.png";
+  logoTomato.src = "./tomato/tomato-kiss.png";
 
   const kiss = document.createElement("img");
 
@@ -3464,7 +3465,7 @@ function launchTomatoKiss() {
   }, 1400);
 
   setTimeout(() => {
-    logoTomato.src = "./tomato/tomato-idle-ui.png";
+    logoTomato.src = "./tomato/tomato-idle.png";
   }, 800);
 }
 
@@ -3473,10 +3474,10 @@ function launchTomatoBlink() {
 
   if (!logoTomato) return;
 
-  logoTomato.src = "./tomato/tomato-idle-closed-ui.png";
+  logoTomato.src = "./tomato/tomato-idle-closed.png";
 
   setTimeout(() => {
-    logoTomato.src = "./tomato/tomato-idle-ui.png";
+    logoTomato.src = "./tomato/tomato-idle.png";
   }, 180);
 }
 
@@ -3487,7 +3488,7 @@ function launchTomatoCrown() {
 
   const crown = document.createElement("img");
 
-  crown.src = "./tomato/crown-ui.png";
+  crown.src = "./tomato/crown.png";
 
   crown.className = "crown-pop";
 
@@ -3847,7 +3848,7 @@ infoToggle.addEventListener("click", () => {
 
   const fly = document.createElement("img");
 
-  fly.src = "./tomato/info-popup-ui.png";
+  fly.src = "./tomato/info-popup.png";
 
   fly.className = "info-fly";
 
