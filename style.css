@@ -2704,7 +2704,9 @@ canvas {
   text-decoration: none;
   letter-spacing: 1px;
   touch-action: manipulation;
-  transition: transform 0.12s ease, background-color 0.18s ease;
+  transition:
+    transform 0.12s ease,
+    background-color 0.18s ease;
 }
 
 .catalog-pdf-link:hover {
@@ -3648,7 +3650,7 @@ canvas {
 
   .badge-hit,
   .badge-new {
-    font-size: 12px;
+    font-size: 14px;
   }
 
   .product-price {
@@ -3832,7 +3834,7 @@ canvas {
 
   .badge-hit,
   .badge-new {
-    font-size: 12px;
+    font-size: 14px;
 
     margin-top: 4px;
   }
@@ -4078,7 +4080,7 @@ canvas {
   margin-top: 7px;
   padding: 3px 7px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 14px;
   line-height: 1;
 }
 
@@ -4477,10 +4479,9 @@ canvas {
   }
 
   .clear-search {
-  
-  width: 20px;
-  height: 20px;
-  min-width: 20px;
+    width: 20px;
+    height: 20px;
+    min-width: 20px;
   }
 }
 
@@ -4489,7 +4490,6 @@ canvas {
     padding: 4px 5px;
     font-size: 9.5px;
   }
-
 }
 /* TRANSLUCENT EMERALD PALETTE */
 
