@@ -772,11 +772,22 @@ const CHAT_PAYMENT = {
   }
 
   function updateChatHeader(order) {
-    elements.chatTitle.textContent = `Чат по заказу ${normalizeOrderId(order.orderId)}`;
-    elements.chatCustomer.textContent = order.name || "";
-    elements.chatStatus.textContent = order.statusLabel || "НЕ ОПЛАЧЕН";
-    elements.chatStatus.className = `order-chat-status ${statusClass(order.status)}`;
+  elements.chatTitle.textContent =
+    `Чат по заказу ${normalizeOrderId(order.orderId)}`;
+
+  elements.chatCustomer.textContent = order.name || "";
+
+  let statusLabel = order.statusLabel || "НЕ ОПЛАЧЕНО";
+
+  if (order.status === "debt") {
+    const debt = Number(order.debt) || 0;
+    statusLabel = `ДОПЛАТИТЬ ${debt.toLocaleString("ru-RU")}\u00A0₽`;
   }
+
+  elements.chatStatus.textContent = statusLabel;
+  elements.chatStatus.className =
+    `order-chat-status ${statusClass(order.status)}`;
+}
 
   function renderChatPayload(payload, scrollToEnd = false) {
     if (!payload?.order || !Array.isArray(payload.messages)) return;

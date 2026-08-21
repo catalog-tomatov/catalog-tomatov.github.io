@@ -4582,6 +4582,8 @@ canvas {
   display: flex;
   align-items: center;
   gap: 7px;
+  align-self: flex-start;
+  margin-top: 6px;
   color: #7d6c60;
   font-size: 14px;
   white-space: nowrap;
@@ -5361,7 +5363,7 @@ canvas {
 .saved-order-chat-chevron {
   display: grid;
   place-items: center;
-  padding: 0px 6px;
+  padding: 0px 16px;
   width: 18px;
   height: 34px;
   border: 0;
