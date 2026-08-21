@@ -565,6 +565,16 @@ const CHAT_PAYMENT = {
     }
   }
 
+  function getChatGreeting() {
+  const hour = new Date().getHours();
+
+  if (hour >= 5 && hour <= 10) return "Доброе утро";
+  if (hour >= 11 && hour <= 17) return "Добрый день";
+  if (hour >= 18 && hour <= 22) return "Добрый вечер";
+
+  return "Доброй ночи";
+}
+
   function buildPendingInitialPayload(order) {
   const orderId = normalizeOrderId(order.orderId);
   const seasonId = state.config?.seasonId || order.seasonId || "";
@@ -611,7 +621,7 @@ const CHAT_PAYMENT = {
         orderId,
         sender: "client",
         type: "text",
-        text: "Здравствуйте! Направляю заказ по семенам томатов для подтверждения и оплаты 🍅",
+        text: "`${getChatGreeting()}! Направляю заказ по семенам томатов для подтверждения и оплаты 🍅",
         createdAt: new Date(now).toISOString(),
       },
 
@@ -630,7 +640,7 @@ const CHAT_PAYMENT = {
         orderId,
         sender: "seller",
         type: "text",
-        text: "Здравствуйте! 🌱 Спасибо за заказ.",
+        text: "`${getChatGreeting()}! 🌱 Спасибо за заказ.",
         createdAt: new Date(now + CHAT_SELLER_DELAY).toISOString(),
       },
 
@@ -818,7 +828,7 @@ const CHAT_PAYMENT = {
     if (message.sender === "client" || message.sender === "seller") {
       const role = document.createElement("b");
       role.className = "chat-role-label";
-      role.textContent = message.sender === "seller" ? "Продавец" : "Покупатель";
+      role.textContent = message.sender === "seller" ? "Продавец" : "";
       bubble.appendChild(role);
     }
     const text = document.createElement("span");
@@ -966,98 +976,220 @@ addDetail("Важно", CHAT_PAYMENT.paymentText, "note");
   }
 
   function renderAttachmentCard(message) {
-    const attachment = message.attachment || {};
-    const card = document.createElement("article");
-    card.className = "chat-structured-card chat-attachment-card";
-    const meta = document.createElement("div");
-    meta.className = "chat-attachment-meta";
-    const icon = document.createElement("span");
-    icon.textContent = attachment.mime === "application/pdf" ? "📄" : "🖼️";
-    const copy = document.createElement("span");
-    copy.textContent = `${attachment.fileName || "Вложение"} · ${formatBytes(attachment.sizeBytes)}`;
-    meta.append(icon, copy);
-    card.appendChild(meta);
+  const attachment = message.attachment || {};
+  const card = document.createElement("article");
+  card.className = "chat-structured-card chat-attachment-card";
 
+  const isImage = String(attachment.mime || "").startsWith("image/");
+  const isPdf = attachment.mime === "application/pdf";
+
+  /* =========================
+     PDF
+     ========================= */
+  if (isPdf) {
+    card.classList.add("chat-pdf-card");
+
+    const pdfRow = document.createElement("button");
+    pdfRow.type = "button";
+    pdfRow.className = "chat-pdf-row";
+
+    const pdfBadge = document.createElement("span");
+    pdfBadge.className = "chat-pdf-badge";
+    pdfBadge.textContent = "PDF";
+
+    const pdfName = document.createElement("span");
+    pdfName.className = "chat-pdf-name";
+    pdfName.textContent = attachment.fileName || "Документ.pdf";
+
+    pdfRow.append(pdfBadge, pdfName);
+    card.appendChild(pdfRow);
+
+    /* PDF ещё отправляется */
     if (message.delivery === "sending") {
+      pdfRow.disabled = true;
+
       const pending = document.createElement("small");
-      pending.textContent = message.text
-        ? `${message.text}\nОтправляется…`
-        : "Отправляется…";
+      pending.className = "chat-pdf-status";
+      pending.textContent = "Загружается…";
+
       card.appendChild(pending);
       return card;
     }
 
+    /* Ошибка отправки */
     if (message.delivery === "error") {
+      pdfRow.disabled = true;
+
       const failed = document.createElement("small");
-      failed.textContent = message.text
-        ? `${message.text}\nНе отправлено`
-        : "Не отправлено";
+      failed.className = "chat-pdf-status error";
+      failed.textContent = "Не отправлено";
+
       const retry = document.createElement("button");
       retry.type = "button";
-      retry.className = "chat-attachment-action";
+      retry.className = "chat-pdf-retry";
       retry.textContent = "Повторить";
-      retry.addEventListener("click", () => void retryOptimisticMessage(message));
+
+      retry.addEventListener("click", () => {
+        void retryOptimisticMessage(message);
+      });
+
       card.append(failed, retry);
       return card;
     }
 
-    if (String(attachment.mime || "").startsWith("image/")) {
-      const image = document.createElement("img");
-      image.className = "chat-attachment-image";
-      image.alt = attachment.fileName || "Изображение в чате";
-      image.loading = "lazy";
-      card.appendChild(image);
-      const load = async () => {
-        if (image.dataset.loaded) return;
-        image.dataset.loaded = "1";
-        try {
-          const blob = await fetchCurrentAttachment(attachment.attachmentId);
-          const url = URL.createObjectURL(blob);
-          state.objectUrls.add(url);
-          image.src = url;
-          image.addEventListener("click", () => window.open(url, "_blank", "noopener"));
-        } catch (error) {
-          image.alt = error.message || "Не удалось загрузить изображение";
-        }
-      };
-      if ("IntersectionObserver" in window) {
-        const observer = new IntersectionObserver((entries) => {
-          if (!entries.some((entry) => entry.isIntersecting)) return;
-          observer.disconnect();
-          void load();
-        }, { root: elements.chatMessages, rootMargin: "80px" });
-        observer.observe(image);
-      } else {
-        void load();
+    /* Обычный загруженный PDF */
+    pdfRow.addEventListener("click", async () => {
+      if (!attachment.attachmentId) return;
+
+      pdfRow.disabled = true;
+
+      try {
+        const blob = await fetchCurrentAttachment(
+          attachment.attachmentId
+        );
+
+        const url = URL.createObjectURL(blob);
+        state.objectUrls.add(url);
+
+        window.open(url, "_blank", "noopener");
+      } catch (error) {
+        setChatError(
+          error.message || "Не удалось открыть PDF."
+        );
+      } finally {
+        pdfRow.disabled = false;
       }
-    } else {
-      const open = document.createElement("button");
-      open.type = "button";
-      open.className = "chat-attachment-action";
-      open.textContent = "Открыть";
-      open.addEventListener("click", async () => {
-        open.disabled = true;
-        try {
-          const blob = await fetchCurrentAttachment(attachment.attachmentId);
-          const url = URL.createObjectURL(blob);
-          state.objectUrls.add(url);
-          window.open(url, "_blank", "noopener");
-        } catch (error) {
-          setChatError(error.message || "Не удалось открыть файл.");
-        } finally {
-          open.disabled = false;
-        }
-      });
-      card.appendChild(open);
-    }
+    });
+
     if (message.text) {
       const caption = document.createElement("small");
       caption.textContent = message.text;
       card.appendChild(caption);
     }
+
     appendMessageTime(card, message.createdAt);
+
     return card;
   }
+
+  /* =========================
+     ИЗОБРАЖЕНИЯ
+     ========================= */
+
+  if (isImage) {
+  const image = document.createElement("img");
+  image.className = "chat-attachment-image";
+  image.alt = "Фото";
+  image.loading = "lazy";
+
+  card.appendChild(image);
+
+  // Если фото только что отправили —
+  // показываем локальное превью мгновенно.
+  if (attachment.localBase64) {
+    image.src =
+      `data:${attachment.mime};base64,${attachment.localBase64}`;
+  }
+
+  // Если локального превью уже нет,
+  // например после повторного открытия чата,
+  // загружаем изображение с сервера.
+  else if (
+    attachment.attachmentId &&
+    message.delivery !== "sending"
+  ) {
+    const load = async () => {
+      if (image.dataset.loaded) return;
+      image.dataset.loaded = "1";
+
+      try {
+        const blob = await fetchCurrentAttachment(
+          attachment.attachmentId
+        );
+
+        const url = URL.createObjectURL(blob);
+        state.objectUrls.add(url);
+
+        image.src = url;
+      } catch (error) {
+        image.alt =
+          error.message || "Не удалось загрузить изображение";
+      }
+    };
+
+    if ("IntersectionObserver" in window) {
+      const observer = new IntersectionObserver(
+        (entries) => {
+          if (!entries.some((entry) => entry.isIntersecting)) {
+            return;
+          }
+
+          observer.disconnect();
+          void load();
+        },
+        {
+          root: elements.chatMessages,
+          rootMargin: "80px"
+        }
+      );
+
+      observer.observe(image);
+    } else {
+      void load();
+    }
+  }
+
+  // Нажатие по готовой фотографии
+  image.addEventListener("click", () => {
+    if (image.src) {
+      window.open(image.src, "_blank", "noopener");
+    }
+  });
+
+  // Пока отправляется
+  if (message.delivery === "sending") {
+    const pending = document.createElement("small");
+    pending.className = "chat-image-status";
+    pending.textContent = "Загружается…";
+
+    card.appendChild(pending);
+
+    return card;
+  }
+
+  // Ошибка
+  if (message.delivery === "error") {
+    const failed = document.createElement("small");
+    failed.className = "chat-image-status error";
+    failed.textContent = "Не отправлено";
+
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "chat-pdf-retry";
+    retry.textContent = "Повторить";
+
+    retry.addEventListener("click", () => {
+      void retryOptimisticMessage(message);
+    });
+
+    card.append(failed, retry);
+
+    return card;
+  }
+
+  if (message.text) {
+    const caption = document.createElement("small");
+    caption.textContent = message.text;
+    card.appendChild(caption);
+  }
+
+  appendMessageTime(card, message.createdAt);
+
+  return card;
+}
+
+return card;
+}
 
   function formatBytes(value) {
     const bytes = Number(value) || 0;
@@ -1078,10 +1210,11 @@ addDetail("Важно", CHAT_PAYMENT.paymentText, "note");
       throw new Error("Нет доступа к вложению.");
     }
     const result = await apiPost({
-      action: "chat_attachment",
-      orderId: state.current.order.orderId,
-      chatToken: state.current.access.chatToken,
-      attachmentId,
+    action: "chat_create",
+   orderId: order.orderId,
+    phone: order.phone,
+    requestId,
+   clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     }, 25000);
     const binary = atob(result.attachment.base64);
     const bytes = new Uint8Array(binary.length);
@@ -1274,11 +1407,15 @@ addDetail("Важно", CHAT_PAYMENT.paymentText, "note");
       type: request.attachment ? "attachment" : "text",
       text,
       attachment: request.attachment ? {
-        attachmentId: "",
-        mime: request.attachment.mime,
-        fileName: request.attachment.fileName,
-        sizeBytes: request.attachment.sizeBytes,
-      } : null,
+      attachmentId: "",
+      mime: request.attachment.mime,
+      fileName: request.attachment.fileName,
+      sizeBytes: request.attachment.sizeBytes,
+
+  localBase64: request.attachment.mime.startsWith("image/")
+    ? request.attachment.base64
+    : ""
+} : null,
       createdAt: new Date().toISOString(),
       delivery: "sending",
       retryRequest: request,

@@ -4799,7 +4799,7 @@ canvas {
   display: grid;
   grid-template-columns: 38px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 9px;
+  gap: 12px;
   padding: calc(13px + env(safe-area-inset-top)) 14px 13px;
   border-bottom: 1px solid rgba(137, 94, 63, 0.13);
   background: rgba(255, 253, 249, 0.96);
@@ -4809,7 +4809,7 @@ canvas {
   width: 38px;
   height: 38px;
   border: 0;
-  border-radius: 12px;
+  border-radius: 14px;
   background: #a81c0c;
   color: #fff;
   font-size: 23px;
@@ -4832,13 +4832,16 @@ canvas {
   color: #352820;
   font-size: 16px;
   font-weight: 800;
+  letter-spacing: .4px;
 }
 
 .order-chat-heading span {
   display: block;
-  margin-top: 3px;
+  margin-top: 4px;
   color: #847368;
-  font-size: 14px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: .4px;
 }
 
 .order-chat-status {
@@ -4854,6 +4857,7 @@ canvas {
   font-weight: 900;
   line-height: 1.1;
   text-align: center;
+  letter-spacing: .4px;
 }
 
 .order-chat-status.paid { background: #e8f5eb; color: #14744c; }
@@ -5066,8 +5070,8 @@ canvas {
 .order-chat-send {
   display: grid;
   place-items: center;
-  width: 46px;
-  height: 46px;
+  width: 40px;
+  height: 36px;
   margin: 0;
   padding: 0;
   border: 0;
@@ -5357,6 +5361,7 @@ canvas {
 .saved-order-chat-chevron {
   display: grid;
   place-items: center;
+  padding: 0px 6px;
   width: 18px;
   height: 34px;
   border: 0;
@@ -5403,7 +5408,7 @@ canvas {
 }
 
 .order-chat-heading span {
-  font-size: 14px;
+  font-size: 17px;
 }
 
 .order-chat-status {
@@ -6654,8 +6659,8 @@ button:disabled,
 
 /* UNIFIED ORDER CHAT — shared visual language with «Пульт сезона». */
 .order-chat-sheet { background:#fffdf9; }
-.order-chat-privacy { display:flex; align-items:center; justify-content:center; gap:7px; padding:7px 12px; border-bottom:1px solid #f0e3d3; color:#86786d; background:#fff6e8; font-size:14px; line-height:1.3; text-align:center; }
-.order-chat-privacy>span:first-child { flex:0 0 auto; font-size:11px; filter:grayscale(1); opacity:.72; }
+.order-chat-privacy { display:flex; align-items:center; justify-content:center; gap:3px; padding:7px 7px; border-bottom:1px solid #f0e3d3; color:#86786d; background:#fff6e8; font-size:12px; line-height:1.3; text-align:center; }
+.order-chat-privacy>span:first-child { flex:0 0 auto; font-size:12px; filter:grayscale(1); opacity:.72; }
 .order-chat-messages { padding:12px 13px 20px; background:radial-gradient(circle at 12% 8%,rgba(14,143,108,.045),transparent 30%),linear-gradient(180deg,#fcfaf6,#f8f5ef); }
 .chat-date-divider { align-self:center; width:max-content; max-width:92%; margin:11px auto 7px; padding:4px 10px; border:1px solid #e9dfd3; border-radius:999px; color:#8d8076; background:rgba(255,253,249,.92); font-size:14px; line-height:1.15; text-align:center; }
 .chat-message { margin:7px 0; }
@@ -6674,7 +6679,7 @@ button:disabled,
 .chat-structured-card>small { font-size:14px; line-height:1.4; }
 .chat-card-action,.chat-copy-phone { min-height:41px; margin-top:10px; border-radius:12px; font-size:15px; }
 .order-chat-file-preview,.order-chat-quota,.order-chat-composer { background:#fffdf9; }
-.order-chat-composer { gap:7px; padding-top:8px; }
+.order-chat-composer { gap:8px; padding-top:8px; }
 .order-chat-attach { color:#9b1801; background:#f7efe7; }
 .order-chat-send { background:#0e8f6c; }
 
@@ -6757,7 +6762,6 @@ button:disabled,
 
 .chat-payment-bank-logo {
   display: block;
-  width: 22px;
   height: 22px;
   flex: 0 0 22px;
   object-fit: contain;
@@ -6768,4 +6772,119 @@ button:disabled,
   font-size: 14px;
   font-weight: 700;
   line-height: 1.2;
+}
+
+/* Компактный PDF в чате */
+
+.chat-pdf-card {
+  width: min(92%, 350px);
+  padding: 10px 12px;
+  background: #fffdf9;
+}
+
+.chat-pdf-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-pdf-row:disabled {
+  opacity: 0.75;
+  cursor: default;
+}
+
+.chat-pdf-badge {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 38px;
+  flex: 0 0 44px;
+
+  border-radius: 10px;
+
+  background: #dff6ea;
+  color: #07865d;
+
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.chat-pdf-name {
+  min-width: 0;
+  flex: 1;
+
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  color: #33271f;
+
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.chat-pdf-status {
+  display: block;
+  margin-top: 5px;
+
+  color: #8c8178;
+  font-size: 12px;
+  text-align: right;
+}
+
+.chat-pdf-status.error {
+  color: #b52110;
+}
+
+.chat-pdf-retry {
+  display: block;
+  margin: 6px 0 0 auto;
+  padding: 4px 8px;
+
+  border: 0;
+  background: transparent;
+
+  color: #b52110;
+
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+
+  cursor: pointer;
+}
+
+.chat-attachment-card:has(.chat-attachment-image) {
+  padding: 4px;
+  overflow: hidden;
+}
+
+.chat-attachment-image {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  margin: 0;
+  border-radius: 14px;
+  object-fit: cover;
+  cursor: pointer;
+}
+
+.chat-image-status {
+  display: block;
+  padding: 5px 7px 3px;
+  color: #8c8178;
+  font-size: 12px;
+  text-align: right;
+}
+
+.chat-image-status.error {
+  color: #b52110;
 }
