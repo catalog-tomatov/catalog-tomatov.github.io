@@ -182,7 +182,8 @@ function saveOrderSnapshot(snapshot) {
   );
 
   let nextOrder = {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    seasonId: String(snapshot.seasonId || ""),
     orderId,
     title: String(snapshot.title || "ЗАКАЗ " + orderId),
     mode: snapshot.mode === "addon" ? "addon" : "normal",
@@ -1882,6 +1883,7 @@ document.body.appendChild(blocker);
           totalItems,
           items: submittedItems,
           clientRequestId,
+          seasonId: result.seasonId || "",
         });
       } catch (storageError) {
         console.error("Не удалось сохранить локальную копию заказа", storageError);
@@ -2213,7 +2215,7 @@ function downloadOrderPng(file) {
   setTimeout(() => URL.revokeObjectURL(url), 3000);
 }
 
-document.getElementById("saveBtn").onclick = async () => {
+async function shareOrderCardToMax_() {
   if (!generatedFile) {
     showToast("⏳ Карточка ещё создаётся");
     return;
@@ -2262,6 +2264,14 @@ document.getElementById("saveBtn").onclick = async () => {
       showToast("Не удалось открыть карточку для отправки");
     }
   }
+}
+
+document.getElementById("saveBtn").onclick = async () => {
+  if (typeof openOrderShareChooser_ === "function") {
+    openOrderShareChooser_(lastOrderId);
+    return;
+  }
+  await shareOrderCardToMax_();
 };
 
 document.getElementById("saveBtn").addEventListener("keydown", (event) => {
@@ -2983,9 +2993,19 @@ function renderSavedOrdersSummary() {
   const count = document.getElementById("savedOrdersCount");
   if (!banner || !count) return;
 
-  count.textContent = String(savedOrders.length);
+  const unread = typeof getOrderChatUnreadTotal_ === "function"
+    ? Number(getOrderChatUnreadTotal_()) || 0
+    : 0;
+  count.textContent = unread ? String(unread) : "";
+  count.setAttribute(
+    "aria-label",
+    unread ? `${unread} непрочитанных сообщений` : "",
+  );
+  count.hidden = unread === 0;
   banner.hidden = savedOrders.length === 0;
 }
+
+renderSavedOrdersSummary();
 
 function getSavedOrderDate(order) {
   if (order.dateLabel) return order.dateLabel;
@@ -3003,12 +3023,18 @@ function renderSavedOrdersList() {
   list.innerHTML = "";
 
   savedOrders.forEach((order) => {
+    const card = document.createElement("article");
+    card.className = "saved-order-card";
+
     const row = document.createElement("button");
     row.type = "button";
     row.className = "saved-order-row";
 
     const main = document.createElement("span");
     main.className = "saved-order-row-main";
+
+    const sub = document.createElement("span");
+    sub.className = "saved-order-row-sub";
 
     const title = document.createElement("span");
     title.className = "saved-order-row-title";
@@ -3022,16 +3048,32 @@ function renderSavedOrdersList() {
     date.className = "saved-order-row-date";
     date.textContent = getSavedOrderDate(order);
 
+    const status = document.createElement("strong");
+    status.className = "saved-order-card-status";
+    status.textContent = "СТАТУС ОБНОВЛЯЕТСЯ";
+
     main.append(title, total);
-    row.append(main, date);
+    sub.append(date, status);
+    row.append(main, sub);
     row.addEventListener("click", () => {
       if (row.disabled) return;
       row.disabled = true;
       row.classList.add("saved-orders-pressed");
       setTimeout(() => openSavedOrderCard(order), 110);
     });
-    list.appendChild(row);
+    card.appendChild(row);
+
+    if (typeof appendSavedOrderChatControls_ === "function") {
+      appendSavedOrderChatControls_(card, order);
+    }
+
+    list.appendChild(card);
   });
+
+  const total = document.createElement("p");
+  total.className = "saved-orders-total";
+  total.textContent = `Всего заказов: ${savedOrders.length}`;
+  list.appendChild(total);
 }
 
 function openSavedOrders() {
@@ -3199,6 +3241,8 @@ async function saveRestoredOrderPng() {
 }
 
 function closeSavedOrderCard() {
+  const returnToChatId = String(window.returnToOrderChatId_ || "");
+  window.returnToOrderChatId_ = "";
   sheetGenerationToken++;
   savedSheetMode = false;
   generatedFile = null;
@@ -3207,10 +3251,13 @@ function closeSavedOrderCard() {
   document.querySelector(".sheet-buttons").style.display = "flex";
   document.querySelector(".sheet-message").style.display = "block";
   unlockBody();
+  if (returnToChatId && typeof window.openOrderChat_ === "function") {
+    void window.openOrderChat_(returnToChatId);
+    return;
+  }
   openSavedOrders();
 }
 
-renderSavedOrdersSummary();
 document.getElementById("savedOrdersBanner").addEventListener("click", openSavedOrders);
 
 const savedOrdersModalElement = document.getElementById("savedOrdersModal");
@@ -3894,12 +3941,20 @@ infoToggle.addEventListener("click", () => {
   document.body.appendChild(overlay);
   document.body.appendChild(fly);
 
+  const restoreBlock = typeof createInfoRestoreCard_ === "function"
+    ? createInfoRestoreCard_()
+    : null;
+
+  if (restoreBlock) document.body.appendChild(restoreBlock);
+
   closeBtn.addEventListener("click", () => {
     fly.remove();
 
     closeBtn.remove();
 
     overlay.remove();
+
+    restoreBlock?.remove();
 
     infoToggle.style.opacity = "1";
 
@@ -3913,6 +3968,8 @@ infoToggle.addEventListener("click", () => {
 
     overlay.remove();
 
+    restoreBlock?.remove();
+
     infoToggle.style.opacity = "1";
 
     infoToggle.src = "./tomato/info-tag.png";
@@ -3923,9 +3980,13 @@ infoToggle.addEventListener("click", () => {
   });
 
   requestAnimationFrame(() => {
-    const finalWidth = Math.min(window.innerWidth * 0.92, 420);
-
     const ratio = 420 / 600;
+
+    const finalWidth = Math.min(
+      window.innerWidth * 0.92,
+      420,
+      Math.max(250, (window.innerHeight - (restoreBlock ? 128 : 42)) * ratio),
+    );
 
     const finalHeight = finalWidth / ratio;
 
@@ -3943,6 +4004,13 @@ infoToggle.addEventListener("click", () => {
     fly.style.width = finalWidth + "px";
 
     fly.style.height = finalHeight + "px";
+
+    if (restoreBlock) {
+      restoreBlock.style.left = (window.innerWidth - finalWidth) / 2 + "px";
+      restoreBlock.style.top =
+        (window.innerHeight - finalHeight) / 2 + finalHeight + 7 + "px";
+      restoreBlock.style.width = finalWidth + "px";
+    }
   });
 });
 
