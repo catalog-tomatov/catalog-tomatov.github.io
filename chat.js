@@ -6,6 +6,29 @@
   const CHAT_SEASON_KEY = "tomatoChatSeasonId";
   const CHAT_CONFIG_KEY = "tomatoChatSeasonConfig";
   const CHAT_POLL_INTERVAL = 12000;
+
+  const CHAT_SELLER_DELAY = 6000;
+
+const CHAT_PAYMENT = {
+  sbpPhone: "+79036094545",
+
+  banks: [
+    {
+      name: "СБЕРБАНК",
+      logo: "./tomato/sber.png"
+    },
+    {
+      name: "Т-БАНК",
+      logo: "./tomato/tbank.png"
+    }
+  ],
+
+  recipient: "Анатолий Дмитриевич С.",
+
+  paymentText:
+    "В назначении платежа ничего указывать не нужно. Чек скидывайте пожалуйста сюда в переписку."
+};
+
   const CHAT_TARGET_IMAGE_BYTES = 350 * 1024;
   const CHAT_ATTACHMENT_LIMIT = 1024 * 1024;
   const chatApiUrl = () => `${CATALOG_API_URL}?chat=1`;
@@ -18,6 +41,7 @@
     pendingFile: null,
     shareOrderId: "",
     pollTimer: 0,
+    sellerRevealTimer: 0,
     objectUrls: new Set(),
     createPromises: new Map(),
     initialized: false,
@@ -542,48 +566,56 @@
   }
 
   function buildPendingInitialPayload(order) {
-    const orderId = normalizeOrderId(order.orderId);
-    const seasonId = state.config?.seasonId || order.seasonId || "";
-    const orderKeyPart = orderId.replace(/[^0-9A-Za-z]/g, "");
-    const now = Date.now();
-    const summary = state.summaries.get(orderId) || {};
-    const publicOrder = {
-      seasonId,
+  const orderId = normalizeOrderId(order.orderId);
+  const seasonId = state.config?.seasonId || order.seasonId || "";
+  const orderKeyPart = orderId.replace(/[^0-9A-Za-z]/g, "");
+  const now = Date.now();
+  const summary = state.summaries.get(orderId) || {};
+
+  const publicOrder = {
+    seasonId,
+    orderId,
+    name: order.name || "",
+    pickup: order.pickup || "",
+    createdAt: order.createdAt || new Date(now).toISOString(),
+    itemCount: Number(order.totalItems) || 0,
+    varietyCount: Array.isArray(order.items) ? order.items.length : 0,
+    total: Number(order.total) || 0,
+    prepayment: Number(summary.prepayment) || 0,
+    debt: Number(summary.debt) || Number(order.total) || 0,
+    issued: summary.status === "issued",
+    status: summary.status || "unpaid",
+    statusLabel: summary.statusLabel || "НЕ ОПЛАЧЕН",
+    items: Array.isArray(order.items) ? order.items : [],
+  };
+
+  const messageBase = `${seasonId}_${orderKeyPart}`;
+
+  return {
+    localPending: true,
+    order: publicOrder,
+    summary: {
+      ...summary,
       orderId,
-      name: order.name || "",
-      pickup: order.pickup || "",
-      createdAt: order.createdAt || new Date(now).toISOString(),
-      itemCount: Number(order.totalItems) || 0,
-      varietyCount: Array.isArray(order.items) ? order.items.length : 0,
-      total: Number(order.total) || 0,
-      prepayment: Number(summary.prepayment) || 0,
-      debt: Number(summary.debt) || Number(order.total) || 0,
-      issued: summary.status === "issued",
-      status: summary.status || "unpaid",
-      statusLabel: summary.statusLabel || "НЕ ОПЛАЧЕН",
-      items: Array.isArray(order.items) ? order.items : [],
-    };
-    const messageBase = `${seasonId}_${orderKeyPart}`;
-    return {
-      localPending: true,
-      order: publicOrder,
-      summary: {
-        ...summary,
-        orderId,
-        status: publicOrder.status,
-        statusLabel: publicOrder.statusLabel,
-        total: publicOrder.total,
-        attachmentRemainingBytes: CHAT_ATTACHMENT_LIMIT,
-      },
-      messagesMode: "full",
-      messages: [{
+      status: publicOrder.status,
+      statusLabel: publicOrder.statusLabel,
+      total: publicOrder.total,
+      attachmentRemainingBytes: CHAT_ATTACHMENT_LIMIT,
+    },
+
+    messagesMode: "full",
+
+    messages: [
+      {
         messageId: `auto_client_${messageBase}`,
         orderId,
         sender: "client",
         type: "text",
         text: "Здравствуйте! Направляю заказ по семенам томатов для подтверждения и оплаты 🍅",
         createdAt: new Date(now).toISOString(),
-      }, {
+      },
+
+      {
         messageId: `auto_order_${messageBase}`,
         orderId,
         sender: "client",
@@ -591,16 +623,31 @@
         text: "",
         snapshot: publicOrder,
         createdAt: new Date(now + 1).toISOString(),
-      }, {
+      },
+
+      {
         messageId: `auto_seller_${messageBase}`,
         orderId,
         sender: "seller",
         type: "text",
         text: "Здравствуйте! 🌱 Спасибо за заказ.",
-        createdAt: new Date(now + 2).toISOString(),
-      }],
-    };
-  }
+        createdAt: new Date(now + CHAT_SELLER_DELAY).toISOString(),
+      },
+
+      {
+        messageId: `auto_payment_${messageBase}`,
+        orderId,
+        sender: "seller",
+        type: "payment_card",
+        text: "",
+        snapshot: {
+          amount: publicOrder.total,
+        },
+        createdAt: new Date(now + CHAT_SELLER_DELAY + 1).toISOString(),
+      },
+    ],
+  };
+}
 
   async function fetchChatHistory(order, access, afterMessageId = "") {
     if (access.initialPayload) return access.initialPayload;
@@ -616,7 +663,18 @@
     const order = findSavedOrder(orderId);
     if (!order) throw new Error("Сохранённый заказ не найден.");
     stopChatPolling();
-    state.current = { order, access: null, payload: null };
+
+  if (state.sellerRevealTimer) {
+  clearTimeout(state.sellerRevealTimer);
+  state.sellerRevealTimer = 0;
+  }
+
+  state.current = {
+  order,
+  access: null,
+  payload: null,
+  sellerRevealAt: 0,
+  };
     elements.chatTitle.textContent = `Чат по заказу ${normalizeOrderId(order.orderId)}`;
     elements.chatCustomer.textContent = order.name || "";
     elements.chatStatus.textContent = "ОБНОВЛЯЕМ";
@@ -631,15 +689,42 @@
 
     const cached = await readCachedChat(order.orderId);
     if (cached?.messages?.length) {
-      state.current.payload = cached;
-      renderChatPayload(cached, true);
-      showChatLoading(false);
-    } else {
-      const pendingPayload = buildPendingInitialPayload(order);
-      state.current.payload = pendingPayload;
-      renderChatPayload(pendingPayload, true);
-      showChatLoading(false);
+  // Старый уже существующий чат открываем сразу,
+  // без повторной шестисекундной задержки.
+  state.current.payload = cached;
+  renderChatPayload(cached, true);
+  showChatLoading(false);
+
+} else {
+  // Новый чат: покупатель появляется сразу,
+  // продавец — через 6 секунд.
+  const pendingPayload = buildPendingInitialPayload(order);
+
+  state.current.sellerRevealAt = Date.now() + CHAT_SELLER_DELAY;
+  state.current.payload = pendingPayload;
+
+  renderChatPayload(pendingPayload, true);
+  showChatLoading(false);
+
+  const revealOrderId = normalizeOrderId(order.orderId);
+
+  state.sellerRevealTimer = window.setTimeout(() => {
+    state.sellerRevealTimer = 0;
+
+    if (
+      !state.current ||
+      normalizeOrderId(state.current.order?.orderId) !== revealOrderId
+    ) {
+      return;
     }
+
+    state.current.sellerRevealAt = 0;
+
+    if (state.current.payload) {
+      renderChatPayload(state.current.payload, true);
+    }
+  }, CHAT_SELLER_DELAY);
+}
 
     try {
       const access = await ensureChatAccess(order);
@@ -664,6 +749,10 @@
 
   function closeOrderChat() {
     stopChatPolling();
+    if (state.sellerRevealTimer) {
+    clearTimeout(state.sellerRevealTimer);
+    state.sellerRevealTimer = 0;
+    }
     clearPendingFile();
     state.current = null;
     state.objectUrls.forEach((url) => URL.revokeObjectURL(url));
@@ -687,6 +776,13 @@
     elements.chatMessages.replaceChildren();
     let previousDate = "";
     payload.messages.forEach((message) => {
+      if (
+    state.current?.sellerRevealAt &&
+    Date.now() < state.current.sellerRevealAt &&
+    message.sender === "seller"
+    ) {
+    return;
+    }
       const currentDate = chatDateKey(message.createdAt);
       if (currentDate && currentDate !== previousDate) {
         elements.chatMessages.appendChild(renderChatDateDivider(message.createdAt));
@@ -806,7 +902,7 @@
       row.append(label, value);
       details.appendChild(row);
     };
-    const paymentDigitsRaw = String(snapshot.sbpPhone || "").replace(/\D/g, "");
+    const paymentDigitsRaw = String(CHAT_PAYMENT.sbpPhone || "").replace(/\D/g, "");
     const paymentDigits = paymentDigitsRaw.length === 10
       ? `7${paymentDigitsRaw}`
       : paymentDigitsRaw.length === 11 && paymentDigitsRaw.startsWith("8")
@@ -814,9 +910,39 @@
         : paymentDigitsRaw;
     const paymentPhone = paymentDigits ? `+${paymentDigits}` : "";
     addDetail("СБП", paymentPhone);
-    addDetail("Банк", snapshot.bank || "");
-    addDetail("Получатель", snapshot.recipient || "");
-    addDetail("Важно", snapshot.paymentText || "", "note");
+
+// Банки с логотипами
+const bankRow = document.createElement("div");
+bankRow.className = "chat-payment-detail";
+
+const bankLabel = document.createElement("span");
+bankLabel.textContent = "Банк";
+
+const bankValue = document.createElement("div");
+bankValue.className = "chat-payment-banks";
+
+CHAT_PAYMENT.banks.forEach((bank) => {
+  const bankItem = document.createElement("div");
+  bankItem.className = "chat-payment-bank-item";
+
+  const logo = document.createElement("img");
+  logo.src = bank.logo;
+  logo.alt = "";
+  logo.className = "chat-payment-bank-logo";
+  logo.setAttribute("aria-hidden", "true");
+
+  const name = document.createElement("b");
+  name.textContent = bank.name;
+
+  bankItem.append(logo, name);
+  bankValue.appendChild(bankItem);
+});
+
+bankRow.append(bankLabel, bankValue);
+details.appendChild(bankRow);
+
+addDetail("Получатель", CHAT_PAYMENT.recipient);
+addDetail("Важно", CHAT_PAYMENT.paymentText, "note");
     if (!details.childElementCount) addDetail("Реквизиты", "Ещё не заполнены продавцом.");
     card.append(label, amount, details);
     if (paymentPhone) {
