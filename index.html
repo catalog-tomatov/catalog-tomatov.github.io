@@ -28,7 +28,7 @@
 
   <link
     rel="stylesheet"
-  href="style.css?v=55"
+  href="style.css?v=56"
   />
 
 <link rel="preload" as="image" href="./tomato/tomato-breath-loader.png" type="image/png" fetchpriority="high">
@@ -935,7 +935,11 @@ content="summary_large_image">
 >
   <section class="order-chat-sheet">
     <header class="order-chat-header">
-      <button type="button" id="closeOrderChat" class="order-chat-back" aria-label="Назад">←</button>
+      <button type="button" id="closeOrderChat" class="order-chat-back" aria-label="Назад">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M19 12H5M12 19l-7-7 7-7"></path>
+        </svg>
+      </button>
       <div class="order-chat-heading">
         <h2 id="orderChatTitle">Чат по заказу</h2>
         <span id="orderChatCustomer"></span>
