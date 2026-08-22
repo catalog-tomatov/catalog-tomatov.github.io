@@ -1,4 +1,4 @@
-const SHELL_CACHE = "catalog-shell-v78";
+const SHELL_CACHE = "catalog-shell-v81";
 const IMAGE_CACHE = "catalog-images-v5";
 const SHELL_FILES = [
   "./",
@@ -107,21 +107,34 @@ self.addEventListener("push", (event) => {
   let payload = {};
   try { payload = event.data ? event.data.json() : {}; } catch { payload = {}; }
   const orderId = String(payload.orderId || "");
-  event.waitUntil(self.registration.showNotification(
-    payload.title || "Каталог томатов",
-    {
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    windows.forEach((client) => client.postMessage({
+      type: "catalog-chat-message",
+      orderId,
+      messageId: String(payload.messageId || ""),
+    }));
+    if (windows.some((client) => client.visibilityState === "visible")) return;
+    await self.registration.showNotification(payload.title || "Каталог томатов", {
       body: payload.body || (orderId ? `Новое сообщение по заказу ${orderId}` : "Новое сообщение продавца"),
       icon: "./tomato/favicon-192.png",
       badge: "./tomato/favicon-192.png",
-      tag: orderId ? `order-chat-${orderId}` : "order-chat",
+      tag: payload.tag || (orderId ? `order-chat-${orderId}` : "order-chat"),
+      renotify: true,
       data: { orderId },
-    },
-  ));
+    });
+  })());
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const orderId = String(event.notification.data?.orderId || "");
   const target = orderId ? `./?chat=${encodeURIComponent(orderId)}` : "./";
-  event.waitUntil(clients.openWindow(target));
+  event.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (windows) => {
+    for (const client of windows) {
+      if ("navigate" in client) await client.navigate(target);
+      return client.focus();
+    }
+    return self.clients.openWindow(target);
+  }));
 });

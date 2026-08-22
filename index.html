@@ -28,7 +28,7 @@
 
   <link
     rel="stylesheet"
-  href="style.css?v=56"
+  href="style.css?v=58"
   />
 
 <link rel="preload" as="image" href="./tomato/tomato-breath-loader.png" type="image/png" fetchpriority="high">
@@ -964,6 +964,28 @@ content="summary_large_image">
   </section>
 </div>
 
+<!-- CONTEXTUAL PUSH PERMISSION FOR ORDER CHAT -->
+<div
+  id="chatPushPermissionModal"
+  class="order-chat-overlay chat-push-permission-modal"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="chatPushPermissionTitle"
+  aria-hidden="true"
+  hidden
+>
+  <section class="chat-push-permission-sheet">
+    <button type="button" id="closeChatPushPermission" class="order-chat-close" aria-label="Закрыть">×</button>
+    <span class="chat-push-permission-icon" aria-hidden="true">●</span>
+    <p class="order-chat-eyebrow">УВЕДОМЛЕНИЯ</p>
+    <h2 id="chatPushPermissionTitle">Не пропустить ответ продавца</h2>
+    <p class="chat-push-permission-copy">Сообщение придёт на телефон, даже если каталог закрыт. Ваши собственные сообщения уведомления не создают.</p>
+    <button type="button" id="enableChatPushPermission" class="chat-push-permission-primary">Включить уведомления</button>
+    <button type="button" id="laterChatPushPermission" class="chat-push-permission-later">Не сейчас</button>
+    <p id="chatPushPermissionError" class="order-chat-inline-error" role="alert" hidden></p>
+  </section>
+</div>
+
 <!-- ORDER RESTORATION WITHOUT AN ACCOUNT -->
 <div
   id="restoreOrderModal"
@@ -1061,7 +1083,7 @@ content="summary_large_image">
 <button id="backToTopBtn" class="back-to-top" type="button" aria-label="Вернуться наверх">↑</button>
 
 <script src="script.js?v=63"></script>
-<script src="chat.js?v=14"></script>
+<script src="chat.js?v=16"></script>
 
 </body>
 

@@ -6,6 +6,9 @@
   const CHAT_SEASON_KEY = "tomatoChatSeasonId";
   const CHAT_CONFIG_KEY = "tomatoChatSeasonConfig";
   const CHAT_POLL_INTERVAL = 12000;
+  const CHAT_PUSH_API_URL = "https://pult-sezona.asahi-higashi.chatgpt.site/api/push/customer";
+  const CHAT_PUSH_SNOOZE_KEY = "tomatoChatPushSnoozedUntil";
+  const CHAT_PUSH_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
 
   const CHAT_SELLER_DELAY = 6000;
 
@@ -42,6 +45,7 @@ const CHAT_PAYMENT = {
     shareOrderId: "",
     pollTimer: 0,
     sellerRevealTimer: 0,
+    pushPromptTimer: 0,
     objectUrls: new Set(),
     createPromises: new Map(),
     initialized: false,
@@ -75,6 +79,11 @@ const CHAT_PAYMENT = {
     restorePhone: document.getElementById("restoreOrderPhone"),
     restoreSubmit: document.getElementById("restoreOrderSubmit"),
     restoreError: document.getElementById("restoreOrderError"),
+    pushModal: document.getElementById("chatPushPermissionModal"),
+    closePush: document.getElementById("closeChatPushPermission"),
+    enablePush: document.getElementById("enableChatPushPermission"),
+    laterPush: document.getElementById("laterChatPushPermission"),
+    pushError: document.getElementById("chatPushPermissionError"),
   };
 
   function randomRequestId(prefix = "req") {
@@ -224,6 +233,134 @@ const dbDelete = (store, key) =>
     try { await dbPut("access", next); }
     catch (error) { console.warn("Не удалось сохранить доступ к чату", error); }
     return next;
+  }
+
+  function chatPushSupported() {
+    return Boolean(
+      window.isSecureContext
+      && "serviceWorker" in navigator
+      && "PushManager" in window
+      && "Notification" in window
+    );
+  }
+
+  function base64UrlBytes(value) {
+    const padding = "=".repeat((4 - value.length % 4) % 4);
+    const binary = atob((value + padding).replaceAll("-", "+").replaceAll("_", "/"));
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  }
+
+  async function getChatPushSubscription() {
+    const registration = await navigator.serviceWorker.ready;
+    let subscription = await registration.pushManager.getSubscription();
+    if (subscription) return subscription;
+    const response = await fetch(`${CHAT_PUSH_API_URL}/config`, { cache: "no-store" });
+    if (!response.ok) throw new Error("Сервис уведомлений временно недоступен.");
+    const payload = await response.json();
+    if (!payload.publicKey) throw new Error("Сервис уведомлений не настроен.");
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: base64UrlBytes(payload.publicKey),
+    });
+    return subscription;
+  }
+
+  async function saveChatPushSubscription(subscription, access) {
+    const orderId = normalizeOrderId(access?.orderId);
+    if (!orderId || !access?.chatToken) return false;
+    const response = await fetch(`${CHAT_PUSH_API_URL}/subscribe`, {
+      method: "POST",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        orderId,
+        chatToken: access.chatToken,
+        subscription: subscription.toJSON(),
+      }),
+    });
+    if (!response.ok) throw new Error("Не удалось сохранить уведомления для заказа.");
+    return true;
+  }
+
+  async function syncChatPushSubscriptions(preferredAccess = null) {
+    if (!chatPushSupported() || Notification.permission !== "granted") return false;
+    const subscription = await getChatPushSubscription();
+    const rows = await dbGetAll("access").catch(() => []);
+    const candidates = [...rows];
+    if (preferredAccess?.chatToken) candidates.push(preferredAccess);
+    const unique = new Map();
+    candidates.forEach((access) => {
+      if (
+        access?.chatToken
+        && access.seasonId === state.config?.seasonId
+        && normalizeOrderId(access.orderId)
+      ) unique.set(normalizeOrderId(access.orderId), access);
+    });
+    for (const access of unique.values()) {
+      await saveChatPushSubscription(subscription, access);
+    }
+    return true;
+  }
+
+  function pushPromptSnoozed() {
+    return Number(localStorage.getItem(CHAT_PUSH_SNOOZE_KEY) || 0) > Date.now();
+  }
+
+  function dismissChatPushPrompt(snooze = true) {
+    if (snooze) localStorage.setItem(CHAT_PUSH_SNOOZE_KEY, String(Date.now() + CHAT_PUSH_SNOOZE_MS));
+    setInlineError(elements.pushError, "");
+    hideOverlay(elements.pushModal);
+  }
+
+  function scheduleChatPushPrompt(access) {
+    if (!chatPushSupported() || !access?.chatToken) return;
+    if (Notification.permission === "granted") {
+      void syncChatPushSubscriptions(access).catch((error) => console.warn("Не удалось обновить Push-подписку", error));
+      return;
+    }
+    if (Notification.permission === "denied" || pushPromptSnoozed()) return;
+    if (state.pushPromptTimer) clearTimeout(state.pushPromptTimer);
+    const revealDelay = state.current?.sellerRevealAt
+      ? Math.max(900, state.current.sellerRevealAt - Date.now() + 900)
+      : 900;
+    const orderId = normalizeOrderId(access.orderId);
+    state.pushPromptTimer = window.setTimeout(() => {
+      state.pushPromptTimer = 0;
+      if (
+        Notification.permission === "default"
+        && state.current
+        && normalizeOrderId(state.current.order?.orderId) === orderId
+      ) showOverlay(elements.pushModal);
+    }, revealDelay);
+  }
+
+  async function enableChatPushNotifications() {
+    if (!chatPushSupported()) {
+      setInlineError(elements.pushError, "Уведомления не поддерживаются на этом устройстве.");
+      return;
+    }
+    elements.enablePush.disabled = true;
+    elements.enablePush.textContent = "Включаем…";
+    setInlineError(elements.pushError, "");
+    try {
+      const permission = Notification.permission === "granted"
+        ? "granted"
+        : await Notification.requestPermission();
+      if (permission === "denied") {
+        setInlineError(elements.pushError, "Уведомления запрещены. Разрешить их можно в настройках браузера.");
+        return;
+      }
+      if (permission !== "granted") return;
+      await syncChatPushSubscriptions(state.current?.access || null);
+      localStorage.removeItem(CHAT_PUSH_SNOOZE_KEY);
+      dismissChatPushPrompt(false);
+      showToast("Уведомления включены");
+    } catch (error) {
+      setInlineError(elements.pushError, error.message || "Не удалось включить уведомления.");
+    } finally {
+      elements.enablePush.disabled = false;
+      elements.enablePush.textContent = "Включить уведомления";
+    }
   }
 
   async function cacheChat(orderId, payload) {
@@ -457,9 +594,19 @@ async function removeOutboxRequest(
 
     if (!state.config.seasonClosed) {
       await refreshChatSummaries();
+      if (chatPushSupported() && Notification.permission === "granted") {
+        void syncChatPushSubscriptions().catch((error) => console.warn("Не удалось обновить Push-подписки", error));
+      }
     }
     state.initialized = true;
     renderSavedOrdersSummary();
+    const currentUrl = new URL(window.location.href);
+    const requestedChatId = normalizeOrderId(currentUrl.searchParams.get("chat"));
+    if (requestedChatId && findSavedOrder(requestedChatId)) {
+      currentUrl.searchParams.delete("chat");
+      window.history.replaceState({}, "", `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
+      void openOrderChat(requestedChatId);
+    }
   }
 
   async function refreshChatSummaries() {
@@ -655,7 +802,8 @@ async function removeOutboxRequest(
   const anotherOpen = [
     elements.shareModal,
     elements.chatModal,
-    elements.restoreModal
+    elements.restoreModal,
+    elements.pushModal
   ].some((item) => item && !item.hidden);
 
   if (
@@ -1108,6 +1256,7 @@ async function resumeOutboxForCurrentChat() {
     try {
       const access = await ensureChatAccess(order);
       state.current.access = access;
+      scheduleChatPushPrompt({ ...access, orderId: order.orderId });
       await resumeOutboxForCurrentChat();
       const incoming = await fetchChatHistory(order, access, lastServerMessageId(state.current.payload));
       const payload = mergeChatPayload(state.current.payload, incoming);
@@ -2329,6 +2478,22 @@ function queuedDelivery(request) {
     if (event.target === elements.restoreModal) hideOverlay(elements.restoreModal);
   });
   elements.restoreSubmit?.addEventListener("click", () => void restoreOrder());
+  elements.closePush?.addEventListener("click", () => dismissChatPushPrompt(true));
+  elements.laterPush?.addEventListener("click", () => dismissChatPushPrompt(true));
+  elements.enablePush?.addEventListener("click", () => void enableChatPushNotifications());
+  elements.pushModal?.addEventListener("click", (event) => {
+    if (event.target === elements.pushModal) dismissChatPushPrompt(true);
+  });
+  navigator.serviceWorker?.addEventListener("message", (event) => {
+    const payload = event.data || {};
+    if (payload.type !== "catalog-chat-message") return;
+    const orderId = normalizeOrderId(payload.orderId);
+    if (state.current && normalizeOrderId(state.current.order?.orderId) === orderId) {
+      void pollCurrentChat();
+    } else {
+      void refreshChatSummaries();
+    }
+  });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) stopChatPolling();
     else if (state.current && !elements.chatModal.hidden) {
