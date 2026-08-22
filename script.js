@@ -1184,9 +1184,8 @@ function warmRemainingProductImages(startIndex = 24, concurrency = 10) {
     loadNext();
   }
 }
-function renderProducts() {
-  catalog.innerHTML = "";
 
+function renderProducts() {
   const fragment = document.createDocumentFragment();
   const displayedProducts = products;
 
@@ -1504,9 +1503,10 @@ ${product.available === true ? "" : '<div class="badge-stock">Нет в нали
     fragment.appendChild(card);
   });
 
-  catalog.appendChild(fragment);
-  observeProductTitleFitting();
-  syncProductCardsFromCart();
+  catalog.replaceChildren(fragment);
+
+observeProductTitleFitting();
+syncProductCardsFromCart();
 }
 
 /* ADD TO CART */
@@ -3758,7 +3758,19 @@ setInterval(() => {
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
-  void refreshCatalogInBackground({ minimumAge: CATALOG_RESUME_REFRESH_AFTER });
+
+  const chatModal =
+    document.getElementById("orderChatModal");
+
+  // Возврат из выбора фото / PDF в чат.
+  // Каталог в этот момент обновлять не нужно.
+  if (chatModal && !chatModal.hidden) {
+    return;
+  }
+
+  void refreshCatalogInBackground({
+    minimumAge: CATALOG_RESUME_REFRESH_AFTER
+  });
 });
 
 window.addEventListener("pageshow", () => {
