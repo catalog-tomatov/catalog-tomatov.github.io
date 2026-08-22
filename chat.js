@@ -1218,21 +1218,40 @@ return card;
   }
 
   async function fetchCurrentAttachment(attachmentId) {
-    if (!state.current?.access?.chatToken || !state.current?.order) {
-      throw new Error("Нет доступа к вложению.");
-    }
-    const result = await apiPost({
-    action: "chat_create",
-   orderId: order.orderId,
-    phone: order.phone,
-    requestId,
-   clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    }, 25000);
-    const binary = atob(result.attachment.base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
-    return new Blob([bytes], { type: result.attachment.mime });
+  const current = state.current;
+
+  const orderId = current?.order?.orderId;
+  const chatToken = current?.access?.chatToken;
+
+  if (!orderId || !chatToken || !attachmentId) {
+    throw new Error("Нет доступа к вложению.");
   }
+
+  const result = await apiPost({
+    action: "chat_attachment",
+    orderId,
+    chatToken,
+    attachmentId,
+  }, 25000);
+
+  const attachment = result?.attachment;
+
+  if (!attachment?.base64) {
+    throw new Error("Изображение не получено.");
+  }
+
+  const binary = atob(attachment.base64);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index++) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return new Blob(
+    [bytes],
+    { type: attachment.mime || "application/octet-stream" }
+  );
+}
 
   async function markCurrentChatRead() {
     if (!state.current?.access?.chatToken) return;

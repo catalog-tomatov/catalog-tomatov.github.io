@@ -5060,10 +5060,15 @@ canvas {
 
 .order-chat-composer {
   display: grid;
-  grid-template-columns: 46px minmax(0, 1fr) 46px;
+  grid-template-columns: 38px minmax(0, 1fr) 42px;
   align-items: center;
-  gap: 8px;
-  padding: 9px 12px calc(10px + env(safe-area-inset-bottom));
+  gap: 5px;
+
+  padding:
+    7px
+    18px
+    calc(16px + env(safe-area-inset-bottom));
+
   border-top: 1px solid rgba(137, 94, 63, 0.13);
   background: #fffdf9;
 }
@@ -5072,24 +5077,26 @@ canvas {
 .order-chat-send {
   display: grid;
   place-items: center;
-  width: 40px;
+
   height: 36px;
   margin: 0;
   padding: 0;
+
   border: 0;
   border-radius: 13px;
-  font-size: 24px;
   line-height: 1;
 }
 
 .order-chat-attach {
+  width: 38px;
   background: #f4eee7;
   color: #9c2c1c;
+  font-size: 22px;
   cursor: pointer;
 }
 
 .order-chat-send {
-  width: 46px;
+  width: 42px;
   background: #0d926d;
   color: #fff;
   font-size: 19px;
