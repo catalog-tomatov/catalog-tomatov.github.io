@@ -2,7 +2,7 @@
   "use strict";
 
   const CHAT_DB_NAME = "tomato-order-chat-v1";
-  const CHAT_DB_VERSION = 1;
+  const CHAT_DB_VERSION = 2;
   const CHAT_SEASON_KEY = "tomatoChatSeasonId";
   const CHAT_CONFIG_KEY = "tomatoChatSeasonConfig";
   const CHAT_POLL_INTERVAL = 12000;
@@ -111,6 +111,7 @@ const CHAT_PAYMENT = {
         if (!db.objectStoreNames.contains("access")) db.createObjectStore("access", { keyPath: "key" });
         if (!db.objectStoreNames.contains("chats")) db.createObjectStore("chats", { keyPath: "key" });
         if (!db.objectStoreNames.contains("meta")) db.createObjectStore("meta", { keyPath: "key" });
+        if (!db.objectStoreNames.contains("outbox")) {db.createObjectStore("outbox", {keyPath: "key"});}
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error || new Error("INDEXED_DB_ERROR"));
@@ -140,11 +141,24 @@ const CHAT_PAYMENT = {
 
   const dbGet = (store, key) => dbRequest(store, "readonly", (objectStore) => objectStore.get(key));
   const dbPut = (store, value) => dbRequest(store, "readwrite", (objectStore) => objectStore.put(value));
+  const dbGetAll = (store) =>
+  dbRequest(
+    store,
+    "readonly",
+    (objectStore) => objectStore.getAll()
+  );
+
+const dbDelete = (store, key) =>
+  dbRequest(
+    store,
+    "readwrite",
+    (objectStore) => objectStore.delete(key)
+  );
 
   async function clearChatDatabase() {
     const db = await openDb();
     try {
-      await Promise.all(["access", "chats", "meta"].map((storeName) => new Promise((resolve, reject) => {
+      await Promise.all(["access", "chats", "meta", "outbox"].map((storeName) => new Promise((resolve, reject) => {
         const transaction = db.transaction(storeName, "readwrite");
         const request = transaction.objectStore(storeName).clear();
         request.onsuccess = () => resolve();
@@ -234,6 +248,79 @@ const CHAT_PAYMENT = {
     }
   }
 
+  function outboxKey(orderId, requestId) {
+  return `${orderKey(orderId)}|${requestId}`;
+}
+
+async function saveOutboxRequest(
+  request,
+  createdAt
+) {
+  const orderId =
+    normalizeOrderId(request.orderId);
+
+  // Токен отдельно уже хранится в access.
+  // В outbox его дублировать не нужно.
+  const storedRequest = {
+    action: "chat_send",
+    orderId,
+    requestId: request.requestId,
+    text: request.text || "",
+    attachment: request.attachment || null,
+  };
+
+  await dbPut("outbox", {
+    key: outboxKey(
+      orderId,
+      request.requestId
+    ),
+
+    seasonId:
+      state.config?.seasonId || "",
+
+    orderId,
+    requestId: request.requestId,
+    createdAt:
+      createdAt ||
+      new Date().toISOString(),
+
+    request: storedRequest,
+  });
+}
+
+async function readOutboxForOrder(orderId) {
+  const normalized =
+    normalizeOrderId(orderId);
+
+  const seasonId =
+    state.config?.seasonId || "";
+
+  const rows =
+    await dbGetAll("outbox");
+
+  return rows
+    .filter(
+      (row) =>
+        row.orderId === normalized &&
+        row.seasonId === seasonId
+    )
+    .sort(
+      (a, b) =>
+        new Date(a.createdAt).getTime() -
+        new Date(b.createdAt).getTime()
+    );
+}
+
+async function removeOutboxRequest(
+  orderId,
+  requestId
+) {
+  await dbDelete(
+    "outbox",
+    outboxKey(orderId, requestId)
+  );
+}
+
   function lastServerMessageId(payload) {
     if (payload?.localPending) return "";
     const messages = Array.isArray(payload?.messages) ? payload.messages : [];
@@ -244,18 +331,82 @@ const CHAT_PAYMENT = {
   }
 
   function mergeChatPayload(cached, incoming) {
-    if (!cached?.messages?.length || incoming?.messagesMode !== "delta") return incoming;
-    const known = new Set(cached.messages.map((message) => message.messageId));
-    const additions = (incoming.messages || []).filter((message) => !known.has(message.messageId));
+  if (!cached?.messages?.length) {
+    return incoming;
+  }
+
+  // Запоминаем локальные превью уже загруженных фото.
+  const localImages = new Map();
+
+  cached.messages.forEach((message) => {
+    if (
+      message.messageId &&
+      message.attachment?.localBase64
+    ) {
+      localImages.set(
+        message.messageId,
+        message.attachment.localBase64
+      );
+    }
+  });
+
+  const preserveLocalImage = (message) => {
+    const localBase64 =
+      localImages.get(message?.messageId);
+
+    if (
+      !localBase64 ||
+      !message?.attachment
+    ) {
+      return message;
+    }
+
     return {
-      ...cached,
+      ...message,
+      attachment: {
+        ...message.attachment,
+        localBase64,
+      },
+    };
+  };
+
+  // Полная история с сервера.
+  if (incoming?.messagesMode !== "delta") {
+    return {
       ...incoming,
-      order: incoming.order || cached.order,
-      summary: incoming.summary || cached.summary,
-      messagesMode: "full",
-      messages: [...cached.messages, ...additions],
+      messages: Array.isArray(incoming?.messages)
+        ? incoming.messages.map(preserveLocalImage)
+        : [],
     };
   }
+
+  // Только новые сообщения.
+  const known = new Set(
+    cached.messages.map(
+      (message) => message.messageId
+    )
+  );
+
+  const additions = (incoming.messages || [])
+    .filter(
+      (message) =>
+        !known.has(message.messageId)
+    )
+    .map(preserveLocalImage);
+
+  return {
+    ...cached,
+    ...incoming,
+    order: incoming.order || cached.order,
+    summary:
+      incoming.summary || cached.summary,
+    messagesMode: "full",
+    messages: [
+      ...cached.messages,
+      ...additions,
+    ],
+  };
+}
 
   async function clearClosedClientData() {
     [
@@ -480,14 +631,35 @@ const CHAT_PAYMENT = {
   }
 
   function hideOverlay(element) {
-    element.hidden = true;
-    element.setAttribute("aria-hidden", "true");
-    const savedOrdersModal = document.getElementById("savedOrdersModal");
-    const anotherOpen = [elements.shareModal, elements.chatModal, elements.restoreModal]
-      .some((item) => item && !item.hidden);
-    if (anotherOpen || savedOrdersModal?.style.display === "flex") lockBody();
-    else unlockBody();
+  // Перед скрытием убираем фокус с кнопки внутри окна.
+  if (
+    document.activeElement &&
+    element.contains(document.activeElement)
+  ) {
+    document.activeElement.blur();
   }
+
+  element.hidden = true;
+  element.setAttribute("aria-hidden", "true");
+
+  const savedOrdersModal =
+    document.getElementById("savedOrdersModal");
+
+  const anotherOpen = [
+    elements.shareModal,
+    elements.chatModal,
+    elements.restoreModal
+  ].some((item) => item && !item.hidden);
+
+  if (
+    anotherOpen ||
+    savedOrdersModal?.style.display === "flex"
+  ) {
+    lockBody();
+  } else {
+    unlockBody();
+  }
+}
 
   function setInlineError(element, message = "") {
     element.textContent = message;
@@ -669,6 +841,98 @@ const CHAT_PAYMENT = {
     }, 20000);
   }
 
+async function resumeOutboxForCurrentChat() {
+  if (
+    !state.current?.access?.chatToken ||
+    !state.current?.payload
+  ) {
+    return;
+  }
+
+  const orderId =
+    normalizeOrderId(
+      state.current.order.orderId
+    );
+
+  let rows;
+
+  try {
+    rows =
+      await readOutboxForOrder(orderId);
+  } catch (error) {
+    console.warn(
+      "Не удалось прочитать outbox",
+      error
+    );
+    return;
+  }
+
+  for (const row of rows) {
+    // Пользователь за это время
+    // мог закрыть другой чат.
+    if (
+      !state.current ||
+      normalizeOrderId(
+        state.current.order?.orderId
+      ) !== orderId
+    ) {
+      return;
+    }
+
+    const request = {
+      ...row.request,
+
+      orderId:
+        state.current.order.orderId,
+
+      chatToken:
+        state.current.access.chatToken,
+    };
+
+    const pendingId =
+      `pending_${request.requestId}`;
+
+    let optimistic =
+      state.current.payload.messages.find(
+        (message) =>
+          message.messageId ===
+          pendingId
+      );
+
+    if (!optimistic) {
+      optimistic =
+        buildOptimisticMessage(
+          request,
+          row.createdAt
+        );
+
+      state.current.payload.messages.push(
+        optimistic
+      );
+    } else {
+      optimistic.retryRequest =
+        request;
+
+      optimistic.delivery =
+        "sending";
+    }
+
+    await cacheChat(
+      orderId,
+      state.current.payload
+    );
+
+    renderChatPayload(
+      state.current.payload,
+      true
+    );
+
+    await transmitOptimisticMessage(
+      optimistic
+    );
+  }
+}
+
   async function openOrderChat(orderId) {
     const order = findSavedOrder(orderId);
     if (!order) throw new Error("Сохранённый заказ не найден.");
@@ -739,6 +1003,7 @@ const CHAT_PAYMENT = {
     try {
       const access = await ensureChatAccess(order);
       state.current.access = access;
+      await resumeOutboxForCurrentChat();
       const incoming = await fetchChatHistory(order, access, lastServerMessageId(state.current.payload));
       const payload = mergeChatPayload(state.current.payload, incoming);
       state.current.payload = payload;
@@ -1418,78 +1683,372 @@ return card;
     }
   }
 
+  function buildOptimisticMessage(
+  request,
+  createdAt = new Date().toISOString()
+) {
+  return {
+    messageId:
+      `pending_${request.requestId}`,
+
+    orderId: request.orderId,
+    sender: "client",
+
+    type: request.attachment
+      ? "attachment"
+      : "text",
+
+    text: request.text || "",
+
+    attachment: request.attachment
+      ? {
+          attachmentId: "",
+          mime: request.attachment.mime,
+          fileName:
+            request.attachment.fileName,
+          sizeBytes:
+            request.attachment.sizeBytes,
+
+          localBase64:
+            request.attachment.mime
+              .startsWith("image/")
+              ? request.attachment.base64
+              : "",
+        }
+      : null,
+
+    createdAt,
+    delivery: "sending",
+    retryRequest: request,
+  };
+}
+
   async function sendComposerMessage(event) {
-    event.preventDefault();
-    if (!state.current?.access?.chatToken) return;
-    const text = elements.chatInput.value.trim();
-    if (!text && !state.pendingFile) return;
-    const request = {
-      action: "chat_send",
-      orderId: state.current.order.orderId,
-      chatToken: state.current.access.chatToken,
-      requestId: randomRequestId("message"),
-      text,
-      attachment: state.pendingFile,
-    };
-    const optimistic = {
-      messageId: `pending_${request.requestId}`,
-      orderId: request.orderId,
-      sender: "client",
-      type: request.attachment ? "attachment" : "text",
-      text,
-      attachment: request.attachment ? {
-      attachmentId: "",
-      mime: request.attachment.mime,
-      fileName: request.attachment.fileName,
-      sizeBytes: request.attachment.sizeBytes,
+  event.preventDefault();
 
-  localBase64: request.attachment.mime.startsWith("image/")
-    ? request.attachment.base64
-    : ""
-} : null,
-      createdAt: new Date().toISOString(),
-      delivery: "sending",
-      retryRequest: request,
-    };
-    state.current.payload.messages.push(optimistic);
-    renderChatPayload(state.current.payload, true);
-    elements.chatInput.value = "";
-    clearPendingFile();
-    await transmitOptimisticMessage(optimistic);
+  if (
+    !state.current?.access?.chatToken
+  ) {
+    return;
   }
 
-  async function transmitOptimisticMessage(optimistic) {
-    elements.sendChat.disabled = true;
-    try {
-      const result = await apiPost(optimistic.retryRequest, 30000);
-      const index = state.current.payload.messages.indexOf(optimistic);
-      if (index !== -1) state.current.payload.messages.splice(index, 1, result.message);
-      optimistic.retryRequest.attachment = null;
-      renderChatPayload(state.current.payload, true);
-      const incoming = await fetchChatHistory(
-        state.current.order,
-        state.current.access,
-        lastServerMessageId(state.current.payload),
-      );
-      const payload = mergeChatPayload(state.current.payload, incoming);
-      state.current.payload = payload;
-      await cacheChat(state.current.order.orderId, payload);
-      renderChatPayload(payload, true);
-      setChatError("");
-    } catch (error) {
-      optimistic.delivery = "error";
-      renderChatPayload(state.current.payload, true);
-      setChatError(error.message || "Сообщение не отправлено. Нажмите «Повторить».");
-    } finally {
-      elements.sendChat.disabled = false;
+  const text =
+    elements.chatInput.value.trim();
+
+  if (!text && !state.pendingFile) {
+    return;
+  }
+
+  const request = {
+    action: "chat_send",
+    orderId:
+      state.current.order.orderId,
+
+    chatToken:
+      state.current.access.chatToken,
+
+    requestId:
+      randomRequestId("message"),
+
+    text,
+    attachment: state.pendingFile,
+  };
+
+  const optimistic =
+    buildOptimisticMessage(request);
+
+  state.current.payload.messages.push(
+    optimistic
+  );
+
+  renderChatPayload(
+    state.current.payload,
+    true
+  );
+
+  elements.chatInput.value = "";
+  clearPendingFile();
+
+  // ВАЖНО:
+  // сначала сохраняем сообщение локально,
+  // только потом отправляем в сеть.
+  try {
+    await saveOutboxRequest(
+      request,
+      optimistic.createdAt
+    );
+
+    await cacheChat(
+      request.orderId,
+      state.current.payload
+    );
+  } catch (error) {
+    console.warn(
+      "Не удалось сохранить сообщение в outbox",
+      error
+    );
+  }
+
+  await transmitOptimisticMessage(
+    optimistic
+  );
+}
+
+  async function transmitOptimisticMessage(
+  optimistic
+) {
+  const request =
+    optimistic?.retryRequest;
+
+  if (!request?.requestId) {
+    return;
+  }
+
+  const orderId =
+    normalizeOrderId(request.orderId);
+
+  elements.sendChat.disabled = true;
+
+  try {
+    const result = await apiPost(
+      request,
+      30000
+    );
+
+    let confirmedMessage =
+      result.message;
+
+    // Не теряем мгновенное локальное
+    // превью фотографии.
+    const localBase64 =
+      optimistic.attachment
+        ?.localBase64 ||
+      request.attachment?.base64 ||
+      "";
+
+    if (
+      localBase64 &&
+      confirmedMessage?.attachment
+    ) {
+      confirmedMessage = {
+        ...confirmedMessage,
+
+        attachment: {
+          ...confirmedMessage.attachment,
+          localBase64,
+        },
+      };
     }
+
+    // Сервер подтвердил сообщение —
+    // из очереди его можно удалить.
+    try {
+      await removeOutboxRequest(
+        orderId,
+        request.requestId
+      );
+    } catch (error) {
+      console.warn(
+        "Не удалось очистить outbox",
+        error
+      );
+    }
+
+    const currentIsSameChat =
+      state.current &&
+      normalizeOrderId(
+        state.current.order?.orderId
+      ) === orderId;
+
+    if (currentIsSameChat) {
+      const messages =
+        state.current.payload.messages;
+
+      const pendingIndex =
+        messages.findIndex(
+          (item) =>
+            item.messageId ===
+            optimistic.messageId
+        );
+
+      const confirmedIndex =
+        messages.findIndex(
+          (item) =>
+            item.messageId ===
+            confirmedMessage.messageId
+        );
+
+      if (pendingIndex !== -1) {
+        // Если серверное сообщение уже
+        // успело прийти через синхронизацию,
+        // просто убираем pending.
+        if (
+          confirmedIndex !== -1 &&
+          confirmedIndex !== pendingIndex
+        ) {
+          messages.splice(
+            pendingIndex,
+            1
+          );
+        } else {
+          messages.splice(
+            pendingIndex,
+            1,
+            confirmedMessage
+          );
+        }
+      } else if (
+        confirmedIndex === -1
+      ) {
+        messages.push(
+          confirmedMessage
+        );
+      }
+
+      await cacheChat(
+        orderId,
+        state.current.payload
+      );
+
+      renderChatPayload(
+        state.current.payload,
+        true
+      );
+
+      setChatError("");
+    } else {
+      // Клиент уже закрыл чат,
+      // но сервер успел принять сообщение.
+      const cached =
+        await readCachedChat(orderId);
+
+      if (cached?.messages) {
+        const pendingIndex =
+          cached.messages.findIndex(
+            (item) =>
+              item.messageId ===
+              optimistic.messageId
+          );
+
+        const confirmedIndex =
+          cached.messages.findIndex(
+            (item) =>
+              item.messageId ===
+              confirmedMessage.messageId
+          );
+
+        if (pendingIndex !== -1) {
+          if (
+            confirmedIndex !== -1 &&
+            confirmedIndex !==
+              pendingIndex
+          ) {
+            cached.messages.splice(
+              pendingIndex,
+              1
+            );
+          } else {
+            cached.messages.splice(
+              pendingIndex,
+              1,
+              confirmedMessage
+            );
+          }
+        } else if (
+          confirmedIndex === -1
+        ) {
+          cached.messages.push(
+            confirmedMessage
+          );
+        }
+
+        await cacheChat(
+          orderId,
+          cached
+        );
+      }
+    }
+
+    // Большой base64 больше
+    // для повторной отправки не нужен.
+    if (optimistic.retryRequest) {
+      optimistic.retryRequest.attachment =
+        null;
+    }
+  } catch (error) {
+    // Outbox НЕ удаляем.
+    // Если сервер всё-таки успел принять
+    // сообщение, повторный requestId
+    // безопасно вернёт duplicate.
+    const currentIsSameChat =
+      state.current &&
+      normalizeOrderId(
+        state.current.order?.orderId
+      ) === orderId;
+
+    if (currentIsSameChat) {
+      optimistic.delivery = "error";
+
+      await cacheChat(
+        orderId,
+        state.current.payload
+      );
+
+      renderChatPayload(
+        state.current.payload,
+        true
+      );
+
+      setChatError(
+        error.message ||
+          "Сообщение не отправлено. Нажмите «Повторить»."
+      );
+    }
+  } finally {
+    elements.sendChat.disabled = false;
+  }
+}
+  async function retryOptimisticMessage(
+  message
+) {
+  if (
+    !state.current?.access?.chatToken ||
+    !message?.retryRequest
+  ) {
+    return;
   }
 
-  async function retryOptimisticMessage(message) {
-    message.delivery = "sending";
-    renderChatPayload(state.current.payload, true);
-    await transmitOptimisticMessage(message);
+  message.retryRequest.chatToken =
+    state.current.access.chatToken;
+
+  message.delivery = "sending";
+
+  try {
+    await saveOutboxRequest(
+      message.retryRequest,
+      message.createdAt
+    );
+
+    await cacheChat(
+      state.current.order.orderId,
+      state.current.payload
+    );
+  } catch (error) {
+    console.warn(
+      "Не удалось обновить outbox",
+      error
+    );
   }
+
+  renderChatPayload(
+    state.current.payload,
+    true
+  );
+
+  await transmitOptimisticMessage(
+    message
+  );
+}
 
   function createInfoRestoreCard() {
     const button = document.createElement("button");

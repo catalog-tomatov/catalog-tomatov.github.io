@@ -4801,7 +4801,7 @@ canvas {
   display: grid;
   grid-template-columns: 38px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   padding: calc(13px + env(safe-area-inset-top)) 14px 13px;
   border-bottom: 1px solid rgba(137, 94, 63, 0.13);
   background: rgba(255, 253, 249, 0.96);
@@ -6688,7 +6688,6 @@ button:disabled,
 .chat-structured-card>small { font-size:14px; line-height:1.4; }
 .chat-card-action,.chat-copy-phone { min-height:41px; margin-top:10px; border-radius:12px; font-size:15px; }
 .order-chat-file-preview,.order-chat-quota,.order-chat-composer { background:#fffdf9; }
-.order-chat-composer { gap:8px; padding-top:8px; }
 .order-chat-attach { color:#9b1801; background:#f7efe7; }
 .order-chat-send { background:#0e8f6c; }
 
