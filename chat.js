@@ -1246,20 +1246,36 @@ async function resumeOutboxForCurrentChat() {
 
   function renderOrderCard(message) {
     const snapshot = message.snapshot || {};
-    const card = document.createElement("article");
+    const card = document.createElement("button");
+    card.type = "button";
     card.className = "chat-structured-card chat-order-card";
+
     const label = document.createElement("span");
-    label.textContent = `ЗАКАЗ ${snapshot.orderId || message.orderId || ""}`;
-    const amount = document.createElement("strong");
-    amount.textContent = `${Number(snapshot.total || 0).toLocaleString("ru-RU")} ₽`;
-    const detail = document.createElement("small");
+    label.className = "chat-order-title";
+    label.textContent = `Заказ ${snapshot.orderId || message.orderId || ""}`;
+
+    const customer = document.createElement("span");
+    customer.className = "chat-order-customer";
+    customer.textContent = [snapshot.name, snapshot.pickup]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+      .join(" · ");
+
+    const summary = document.createElement("span");
+    summary.className = "chat-order-summary";
     const packages = Number(snapshot.itemCount) || 0;
-    detail.textContent = `${packages} п`;
-    const action = document.createElement("button");
-    action.type = "button";
-    action.className = "chat-card-action";
-    action.textContent = "Открыть заказ";
-    action.addEventListener("click", () => {
+    summary.textContent = `Сумма: ${Number(snapshot.total || 0).toLocaleString("ru-RU")} ₽ · Кол-во: ${packages} п`;
+
+    const action = document.createElement("span");
+    action.className = "chat-order-action";
+    const actionLabel = document.createElement("span");
+    actionLabel.textContent = "Открыть заказ";
+    const chevron = document.createElement("b");
+    chevron.textContent = "›";
+    chevron.setAttribute("aria-hidden", "true");
+    action.append(actionLabel, chevron);
+
+    card.addEventListener("click", () => {
       const order = findSavedOrder(snapshot.orderId || message.orderId);
       if (!order) return;
       stopChatPolling();
@@ -1267,7 +1283,10 @@ async function resumeOutboxForCurrentChat() {
       hideOverlay(elements.chatModal);
       openSavedOrderCard(order);
     });
-    card.append(label, amount, detail, action);
+
+    card.append(label);
+    if (customer.textContent) card.append(customer);
+    card.append(summary, action);
     appendMessageTime(card, message.createdAt);
     return card;
   }

@@ -6709,6 +6709,64 @@ button:disabled,
 .chat-structured-card>strong { margin:5px 0; color:#9b1801; font-size:20px; }
 .chat-structured-card>small { font-size:14px; line-height:1.4; }
 .chat-card-action,.chat-copy-phone { min-height:41px; margin-top:10px; border-radius:12px; font-size:15px; }
+
+.chat-order-card {
+  display:flex;
+  flex-direction:column;
+  align-items:stretch;
+  padding:13px 14px 10px;
+  font:inherit;
+  text-align:left;
+  cursor:pointer;
+  touch-action:manipulation;
+  transition:transform .12s ease,box-shadow .12s ease,border-color .12s ease;
+}
+.chat-order-card:active { transform:scale(.985); box-shadow:0 2px 7px rgba(72,49,31,.05); }
+.chat-order-card>.chat-order-title {
+  color:#33302d;
+  font-size:16px;
+  font-weight:850;
+  line-height:1.25;
+  letter-spacing:0;
+  text-transform:none;
+}
+.chat-order-card>.chat-order-customer {
+  margin-top:5px;
+  color:#4f4944;
+  font-size:14px;
+  font-weight:650;
+  line-height:1.35;
+  letter-spacing:0;
+  text-transform:none;
+}
+.chat-order-card>.chat-order-summary {
+  margin-top:8px;
+  color:#655c55;
+  font-size:14px;
+  font-weight:500;
+  line-height:1.35;
+  letter-spacing:0;
+  text-transform:none;
+}
+.chat-order-card>.chat-order-action {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-top:11px;
+  padding:10px 2px 5px;
+  border-top:1px solid #eee2d6;
+}
+.chat-order-card>.chat-order-action {
+  color:#9b1801;
+  font-size:15px;
+  font-weight:800;
+  line-height:1.2;
+  letter-spacing:0;
+  text-transform:none;
+}
+.chat-order-action b { font-size:23px; font-weight:500; line-height:.8; }
+.chat-order-card>.chat-message-time { align-self:flex-end; margin-top:7px; }
 .order-chat-file-preview,.order-chat-quota,.order-chat-composer { background:#fffdf9; }
 .order-chat-attach { color:#9b1801; background:#f7efe7; }
 .order-chat-send { background:#0e8f6c; }
@@ -6763,8 +6821,6 @@ button:disabled,
   background:linear-gradient(145deg,#f9fdfb,#edf8f2);
 }
 .chat-payment-card .chat-copy-phone::after { content:"⧉"; background:#0e8f6c; font-size:16px; font-weight:900; }
-.chat-order-card .chat-card-action { padding-right:14px; }
-.chat-order-card .chat-card-action::after { content:none; }
 .order-chat-composer { align-items:center; }
 .order-chat-attach,.order-chat-send,.order-chat-composer textarea { align-self:center; }
 
