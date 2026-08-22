@@ -5215,7 +5215,7 @@ canvas {
   width: 38px;
   background: #f4eee7;
   color: #9c2c1c;
-  font-size: 22px;
+  font-size: 28px;
   cursor: pointer;
 }
 
@@ -6831,25 +6831,25 @@ button:disabled,
   font-size:16px;
   font-weight:850;
   line-height:1.25;
-  letter-spacing:0;
+  letter-spacing:0.4px;
   text-transform:none;
 }
 .chat-order-card>.chat-order-customer {
   margin-top:5px;
   color:#4f4944;
-  font-size:14px;
+  font-size:15px;
   font-weight:650;
   line-height:1.35;
-  letter-spacing:0;
+  letter-spacing:0.4px;
   text-transform:none;
 }
 .chat-order-card>.chat-order-summary {
   margin-top:8px;
   color:#655c55;
-  font-size:14px;
+  font-size:15px;
   font-weight:500;
   line-height:1.35;
-  letter-spacing:0;
+  letter-spacing:0.4px;
   text-transform:none;
 }
 .chat-order-card>.chat-order-action {
@@ -6863,10 +6863,10 @@ button:disabled,
 }
 .chat-order-card>.chat-order-action {
   color:#9b1801;
-  font-size:15px;
+  font-size:17px;
   font-weight:800;
   line-height:1.2;
-  letter-spacing:0;
+  letter-spacing:0.4px;
   text-transform:none;
 }
 .chat-order-action b { font-size:23px; font-weight:500; line-height:.8; }
@@ -6915,7 +6915,7 @@ button:disabled,
 .chat-payment-detail { display:grid; grid-template-columns:88px minmax(0,1fr); gap:9px; padding:8px 10px; border-bottom:1px solid #e5eee8; }
 .chat-payment-detail:last-child { border-bottom:0; }
 .chat-payment-detail>span { color:#718078; font-size:13px; font-weight:700; }
-.chat-payment-detail>b { color:#3f3934; font-size:14px; font-weight:700; line-height:1.35; overflow-wrap:anywhere; }
+.chat-payment-detail>b { color:#3f3934; font-size:15px; font-weight:700; line-height:1.35; overflow-wrap:anywhere; }
 .chat-payment-detail.note { grid-template-columns:1fr; gap:3px; background:#fffaf0; }
 .chat-payment-detail.note>span { color:#8d650c; }
 .chat-payment-detail.note>b { color:#6f6256; font-weight:500; }
