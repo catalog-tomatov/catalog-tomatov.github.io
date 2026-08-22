@@ -395,16 +395,21 @@ async function removeOutboxRequest(
     .map(preserveLocalImage);
 
   return {
-    ...cached,
-    ...incoming,
-    order: incoming.order || cached.order,
-    summary:
-      incoming.summary || cached.summary,
-    messagesMode: "full",
-    messages: [
-      ...cached.messages,
-      ...additions,
-    ],
+  ...cached,
+  ...incoming,
+
+  order:
+    incoming.order || cached.order,
+
+  summary:
+    incoming.summary || cached.summary,
+
+  messagesMode: "full",
+
+  messages: [
+    ...cached.messages,
+    ...additions,
+  ],
   };
 }
 
@@ -678,6 +683,10 @@ async function removeOutboxRequest(
       setInlineError(elements.shareError, "Сохранённый заказ не найден.");
       return;
     }
+
+    order.contactChannel = "chat";
+    persistSavedOrders();
+
     elements.chooseChat.disabled = true;
     setInlineError(elements.shareError, "");
     try {
@@ -693,10 +702,18 @@ async function removeOutboxRequest(
     }
   }
 
-  async function chooseMax() {
-    hideOverlay(elements.shareModal);
-    await shareOrderCardToMax_();
+ async function chooseMax() {
+  const order =
+    findSavedOrder(state.shareOrderId);
+
+  if (order) {
+    order.contactChannel = "max";
+    persistSavedOrders();
   }
+
+  hideOverlay(elements.shareModal);
+  await shareOrderCardToMax_();
+}
 
   function showChatLoading(value) {
     elements.chatLoading.hidden = !value;
@@ -709,33 +726,75 @@ async function removeOutboxRequest(
   }
 
   async function ensureChatAccess(order) {
-    let access = await getAccess(order.orderId);
-    if (access?.chatToken) return access;
-    const key = orderKey(order.orderId);
-    if (state.createPromises.has(key)) return state.createPromises.get(key);
-    const request = (async () => {
-      const requestId = access?.pendingCreateRequestId || randomRequestId("create");
-      access = await putAccess(order.orderId, { pendingCreateRequestId: requestId });
-      const result = await apiPost({
-        action: "chat_create",
-        orderId: order.orderId,
-        phone: order.phone,
-        requestId,
-      }, 25000);
-      await putAccess(order.orderId, {
+  let access =
+    await getAccess(order.orderId);
+
+  if (access?.chatToken) {
+    return access;
+  }
+
+  const key =
+    orderKey(order.orderId);
+
+  if (state.createPromises.has(key)) {
+    return state.createPromises.get(key);
+  }
+
+  const request = (async () => {
+    const requestId =
+      access?.pendingCreateRequestId ||
+      randomRequestId("create");
+
+    access = await putAccess(
+      order.orderId,
+      {
+        pendingCreateRequestId:
+          requestId
+      }
+    );
+
+    const result = await apiPost({
+      action: "chat_create",
+      orderId: order.orderId,
+      phone: order.phone,
+      requestId,
+
+      clientTimeZone:
+        Intl.DateTimeFormat()
+          .resolvedOptions()
+          .timeZone,
+
+      emptyInitialChat:
+        order.contactChannel === "max",
+    }, 25000);
+
+    await putAccess(
+      order.orderId,
+      {
         chatToken: result.chatToken,
         pendingCreateRequestId: "",
         chatCreated: true,
-      });
-      return { ...access, chatToken: result.chatToken, initialPayload: result };
-    })();
-    state.createPromises.set(key, request);
-    try {
-      return await request;
-    } finally {
-      state.createPromises.delete(key);
-    }
+      }
+    );
+
+    return {
+      ...access,
+      chatToken: result.chatToken,
+      initialPayload: result,
+    };
+  })();
+
+  state.createPromises.set(
+    key,
+    request
+  );
+
+  try {
+    return await request;
+  } finally {
+    state.createPromises.delete(key);
   }
+}
 
   function getChatGreeting() {
   const hour = new Date().getHours();
@@ -773,6 +832,65 @@ async function removeOutboxRequest(
 
   const messageBase = `${seasonId}_${orderKeyPart}`;
 
+  const messages = [];
+
+if (order.contactChannel !== "max") {
+  messages.push(
+    {
+      messageId:
+        `auto_client_${messageBase}`,
+      orderId,
+      sender: "client",
+      type: "text",
+      text:
+        `${getChatGreeting()}! Направляю заказ по семенам томатов для подтверждения и оплаты 🍅`,
+      createdAt:
+        new Date(now).toISOString(),
+    },
+    {
+      messageId:
+        `auto_order_${messageBase}`,
+      orderId,
+      sender: "client",
+      type: "order_card",
+      text: "",
+      snapshot: publicOrder,
+      createdAt:
+        new Date(now + 1).toISOString(),
+    },
+    {
+      messageId:
+        `auto_seller_${messageBase}`,
+      orderId,
+      sender: "seller",
+      type: "text",
+      text:
+        `${getChatGreeting()}! 🌱 Спасибо за заказ.`,
+      createdAt:
+        new Date(
+          now + CHAT_SELLER_DELAY
+        ).toISOString(),
+    },
+    {
+      messageId:
+        `auto_payment_${messageBase}`,
+      orderId,
+      sender: "seller",
+      type: "payment_card",
+      text: "",
+      snapshot: {
+        amount: publicOrder.total,
+      },
+      createdAt:
+        new Date(
+          now +
+          CHAT_SELLER_DELAY +
+          1
+        ).toISOString(),
+    }
+  );
+}
+
   return {
     localPending: true,
     order: publicOrder,
@@ -785,50 +903,9 @@ async function removeOutboxRequest(
       attachmentRemainingBytes: CHAT_ATTACHMENT_LIMIT,
     },
 
-    messagesMode: "full",
-
-    messages: [
-      {
-        messageId: `auto_client_${messageBase}`,
-        orderId,
-        sender: "client",
-        type: "text",
-        text: `${getChatGreeting()}! Направляю заказ по семенам томатов для подтверждения и оплаты 🍅`,
-        createdAt: new Date(now).toISOString(),
-      },
-
-      {
-        messageId: `auto_order_${messageBase}`,
-        orderId,
-        sender: "client",
-        type: "order_card",
-        text: "",
-        snapshot: publicOrder,
-        createdAt: new Date(now + 1).toISOString(),
-      },
-
-      {
-        messageId: `auto_seller_${messageBase}`,
-        orderId,
-        sender: "seller",
-        type: "text",
-        text: `${getChatGreeting()}! 🌱 Спасибо за заказ.`,
-        createdAt: new Date(now + CHAT_SELLER_DELAY).toISOString(),
-      },
-
-      {
-        messageId: `auto_payment_${messageBase}`,
-        orderId,
-        sender: "seller",
-        type: "payment_card",
-        text: "",
-        snapshot: {
-          amount: publicOrder.total,
-        },
-        createdAt: new Date(now + CHAT_SELLER_DELAY + 1).toISOString(),
-      },
-    ],
-  };
+     messagesMode: "full",
+  messages,
+};
 }
 
   async function fetchChatHistory(order, access, afterMessageId = "") {
