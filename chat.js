@@ -235,8 +235,10 @@ const dbDelete = (store, key) =>
         payload,
         cachedAt: Date.now(),
       });
+      return true;
     } catch (error) {
       console.warn("Не удалось сохранить локальную копию чата", error);
+      return false;
     }
   }
 
@@ -969,6 +971,30 @@ async function resumeOutboxForCurrentChat() {
     const pendingId =
       `pending_${request.requestId}`;
 
+    // Подтверждённое сообщение могло уже сохраниться локально,
+    // а удаление outbox — не успеть до закрытия PWA.
+    const locallyConfirmed =
+      state.current.payload.messages.find(
+        (message) =>
+          message.localRequestId === request.requestId &&
+          !message.delivery
+      );
+
+    if (locallyConfirmed) {
+      try {
+        await removeOutboxRequest(
+          orderId,
+          request.requestId
+        );
+      } catch (error) {
+        console.warn(
+          "Не удалось очистить подтверждённый outbox",
+          error
+        );
+      }
+      continue;
+    }
+
     let optimistic =
       state.current.payload.messages.find(
         (message) =>
@@ -989,10 +1015,12 @@ async function resumeOutboxForCurrentChat() {
     } else {
       optimistic.retryRequest =
         request;
-
-      optimistic.delivery =
-        "sending";
     }
+
+    // Текст уже надёжно лежит в outbox, поэтому визуально
+    // выглядит отправленным. Для вложений оставляем загрузку.
+    optimistic.delivery =
+      queuedDelivery(request);
 
     await cacheChat(
       orderId,
@@ -1800,6 +1828,12 @@ return card;
   };
 }
 
+function queuedDelivery(request) {
+  return request?.attachment
+    ? "sending"
+    : "queued";
+}
+
   async function sendComposerMessage(event) {
   event.preventDefault();
 
@@ -1831,42 +1865,66 @@ return card;
     attachment: state.pendingFile,
   };
 
+  const payload = state.current.payload;
+
   const optimistic =
     buildOptimisticMessage(request);
 
-  state.current.payload.messages.push(
+  payload.messages.push(
     optimistic
   );
 
-  renderChatPayload(
-    state.current.payload,
-    true
-  );
+  // Вложение показывает превью и загрузку сразу.
+  // Текст впервые рисуем уже после записи в outbox,
+  // поэтому пользователь не видит промежуточный статус.
+  if (request.attachment) {
+    renderChatPayload(
+      payload,
+      true
+    );
+  }
 
   elements.chatInput.value = "";
   clearPendingFile();
 
-  // ВАЖНО:
-  // сначала сохраняем сообщение локально,
-  // только потом отправляем в сеть.
+  // ВАЖНО: сначала сохраняем сообщение локально,
+  // только потом считаем текст визуально отправленным
+  // и запускаем реальную отправку в фоне.
   try {
     await saveOutboxRequest(
       request,
       optimistic.createdAt
-    );
-
-    await cacheChat(
-      request.orderId,
-      state.current.payload
     );
   } catch (error) {
     console.warn(
       "Не удалось сохранить сообщение в outbox",
       error
     );
+
+    optimistic.delivery = "error";
+    await cacheChat(
+      request.orderId,
+      payload
+    );
+    if (state.current?.payload === payload) {
+      renderChatPayload(payload, true);
+      setChatError(
+        "Сообщение не сохранено. Нажмите «Повторить»."
+      );
+    }
+    return;
   }
 
-  await transmitOptimisticMessage(
+  optimistic.delivery = queuedDelivery(request);
+  await cacheChat(
+    request.orderId,
+    payload
+  );
+  if (state.current?.payload === payload) {
+    renderChatPayload(payload, true);
+  }
+
+  void transmitOptimisticMessage(
     optimistic
   );
 }
@@ -1884,7 +1942,10 @@ return card;
   const orderId =
     normalizeOrderId(request.orderId);
 
-  elements.sendChat.disabled = true;
+  const blocksComposer = Boolean(request.attachment);
+  if (blocksComposer) {
+    elements.sendChat.disabled = true;
+  }
 
   try {
     const result = await apiPost(
@@ -1917,25 +1978,20 @@ return card;
       };
     }
 
-    // Сервер подтвердил сообщение —
-    // из очереди его можно удалить.
-    try {
-      await removeOutboxRequest(
-        orderId,
-        request.requestId
-      );
-    } catch (error) {
-      console.warn(
-        "Не удалось очистить outbox",
-        error
-      );
-    }
+    // Локальная связь с requestId позволяет безопасно
+    // закончить очистку outbox после перезапуска PWA.
+    confirmedMessage = {
+      ...confirmedMessage,
+      localRequestId: request.requestId,
+    };
 
     const currentIsSameChat =
       state.current &&
       normalizeOrderId(
         state.current.order?.orderId
       ) === orderId;
+
+    let confirmedPersisted = false;
 
     if (currentIsSameChat) {
       const messages =
@@ -1982,7 +2038,7 @@ return card;
         );
       }
 
-      await cacheChat(
+      confirmedPersisted = await cacheChat(
         orderId,
         state.current.payload
       );
@@ -2039,9 +2095,25 @@ return card;
           );
         }
 
-        await cacheChat(
+        confirmedPersisted = await cacheChat(
           orderId,
           cached
+        );
+      }
+    }
+
+    // Удаляем outbox только после подтверждения сервера
+    // и сохранения подтверждённого сообщения локально.
+    if (confirmedPersisted) {
+      try {
+        await removeOutboxRequest(
+          orderId,
+          request.requestId
+        );
+      } catch (error) {
+        console.warn(
+          "Не удалось очистить outbox",
+          error
         );
       }
     }
@@ -2082,7 +2154,9 @@ return card;
       );
     }
   } finally {
-    elements.sendChat.disabled = false;
+    if (blocksComposer) {
+      elements.sendChat.disabled = false;
+    }
   }
 }
   async function retryOptimisticMessage(
@@ -2098,24 +2172,39 @@ return card;
   message.retryRequest.chatToken =
     state.current.access.chatToken;
 
-  message.delivery = "sending";
-
   try {
     await saveOutboxRequest(
       message.retryRequest,
       message.createdAt
-    );
-
-    await cacheChat(
-      state.current.order.orderId,
-      state.current.payload
     );
   } catch (error) {
     console.warn(
       "Не удалось обновить outbox",
       error
     );
+
+    message.delivery = "error";
+    await cacheChat(
+      state.current.order.orderId,
+      state.current.payload
+    );
+    renderChatPayload(
+      state.current.payload,
+      true
+    );
+    setChatError(
+      "Сообщение не сохранено. Нажмите «Повторить»."
+    );
+    return;
   }
+
+  message.delivery = queuedDelivery(
+    message.retryRequest
+  );
+  await cacheChat(
+    state.current.order.orderId,
+    state.current.payload
+  );
 
   renderChatPayload(
     state.current.payload,
