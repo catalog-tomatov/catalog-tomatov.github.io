@@ -621,7 +621,7 @@ const CHAT_PAYMENT = {
         orderId,
         sender: "client",
         type: "text",
-        text: "`${getChatGreeting()}! Направляю заказ по семенам томатов для подтверждения и оплаты 🍅",
+        text: `${getChatGreeting()}! Направляю заказ по семенам томатов для подтверждения и оплаты 🍅`,
         createdAt: new Date(now).toISOString(),
       },
 
@@ -640,7 +640,7 @@ const CHAT_PAYMENT = {
         orderId,
         sender: "seller",
         type: "text",
-        text: "`${getChatGreeting()}! 🌱 Спасибо за заказ.",
+        text: `${getChatGreeting()}! 🌱 Спасибо за заказ.`,
         createdAt: new Date(now + CHAT_SELLER_DELAY).toISOString(),
       },
 
