@@ -1106,9 +1106,10 @@ addDetail("Важно", CHAT_PAYMENT.paymentText, "note");
   // например после повторного открытия чата,
   // загружаем изображение с сервера.
   else if (
-    attachment.attachmentId &&
-    message.delivery !== "sending"
-  ) {
+  attachment.attachmentId &&
+  message.delivery !== "sending" &&
+  state.current?.access?.chatToken
+) {
     const load = async () => {
       if (image.dataset.loaded) return;
       image.dataset.loaded = "1";

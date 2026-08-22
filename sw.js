@@ -62,22 +62,42 @@ async function networkFirst(request) {
 
 self.addEventListener("fetch", (event) => {
   const request = event.request;
+
   if (request.method !== "GET") return;
+
   const url = new URL(request.url);
-  if (url.origin !== self.location.origin) return;
+
+  // VPN-тест всегда идёт напрямую в сеть,
+  // его специально не берём из кэша.
+  if (url.searchParams.has("__vpn_test")) {
+    return;
+  }
+
+  // Картинки кэшируем с ЛЮБОГО домена.
+  if (request.destination === "image") {
+    event.respondWith(
+      cacheFirst(request, IMAGE_CACHE)
+    );
+    return;
+  }
+
+  // Всё остальное кэшируем только с нашего сайта.
+  if (url.origin !== self.location.origin) {
+    return;
+  }
 
   if (request.mode === "navigate") {
     event.respondWith(networkFirst(request));
     return;
   }
 
-  if (request.destination === "image") {
-    event.respondWith(cacheFirst(request, IMAGE_CACHE));
-    return;
-  }
-
-  if (["script", "style", "font", "manifest"].includes(request.destination)) {
-    event.respondWith(cacheFirst(request, SHELL_CACHE));
+  if (
+    ["script", "style", "font", "manifest"]
+      .includes(request.destination)
+  ) {
+    event.respondWith(
+      cacheFirst(request, SHELL_CACHE)
+    );
   }
 });
 

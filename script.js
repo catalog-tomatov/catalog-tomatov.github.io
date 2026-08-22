@@ -1025,6 +1025,46 @@ window.addEventListener("resize", () => {
 
 const catalogImageWarmers = new Set();
 
+function testProductImageHost(productList, timeoutMs = 5000) {
+  const testImageUrl = String(
+    productList?.find((product) => product?.image)?.image || ""
+  ).trim();
+
+  if (!testImageUrl) {
+    return Promise.resolve(true);
+  }
+
+  return new Promise((resolve) => {
+    const image = new Image();
+    let finished = false;
+
+    const finish = (result) => {
+      if (finished) return;
+      finished = true;
+
+      clearTimeout(timer);
+      image.onload = null;
+      image.onerror = null;
+
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => {
+      finish(false);
+    }, timeoutMs);
+
+    image.onload = () => finish(true);
+    image.onerror = () => finish(false);
+
+    const url = new URL(testImageUrl, window.location.href);
+
+    // Реальная проверка сети, а не старой картинки из кэша
+    url.searchParams.set("__vpn_test", Date.now().toString());
+
+    image.src = url.href;
+  });
+}
+
 function waitForInitialProductImages(limit = 24, timeoutMs = 8000) {
   const allImages = Array.from(
     document.querySelectorAll(".product-image img"),
