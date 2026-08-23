@@ -1417,6 +1417,9 @@ async function resumeOutboxForCurrentChat() {
     state.objectUrls.forEach((url) => URL.revokeObjectURL(url));
     state.objectUrls.clear();
     hideOverlay(elements.chatModal);
+    if (typeof window.restoreCatalogAfterChat === "function") {
+      window.restoreCatalogAfterChat();
+    }
     void refreshChatSummaries();
   }
 

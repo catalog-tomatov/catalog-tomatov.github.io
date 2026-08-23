@@ -1509,6 +1509,16 @@ observeProductTitleFitting();
 syncProductCardsFromCart();
 }
 
+function restoreCatalogAfterChat() {
+  if (!catalog || catalog.children.length || !products.length) return false;
+
+  renderProducts();
+  applyProductSearch();
+  return true;
+}
+
+window.restoreCatalogAfterChat = restoreCatalogAfterChat;
+
 /* ADD TO CART */
 
 function addToCart(product, qty) {
