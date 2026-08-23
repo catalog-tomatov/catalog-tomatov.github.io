@@ -425,6 +425,8 @@ const dbDelete = (store, key) =>
   }
 
   function chatMessageKey(message) {
+    const localRequestId = String(message?.localRequestId || "").trim();
+    if (localRequestId && message?.delivery) return `request:${localRequestId}`;
     const messageId = String(message?.messageId || "").trim();
     if (messageId) return `id:${messageId}`;
     const attachment = message?.attachment || {};
@@ -546,6 +548,52 @@ async function removeOutboxRequest(
     return "";
   }
 
+  function reconcileOptimisticMessages(messages) {
+    const result = [...messages];
+    const pendingMessages = result.filter((message) => (
+      Boolean(message?.delivery && message?.localRequestId)
+    ));
+    const sameAttachment = (left, right) => (
+      String(left?.attachment?.fileName || "") === String(right?.attachment?.fileName || "")
+      && Number(left?.attachment?.sizeBytes || 0) === Number(right?.attachment?.sizeBytes || 0)
+    );
+    pendingMessages.forEach((pending) => {
+      const pendingIndex = result.indexOf(pending);
+      if (pendingIndex < 0) return;
+      const pendingTime = new Date(pending.createdAt || 0).getTime();
+      let confirmedIndex = -1;
+      let closestDistance = Number.POSITIVE_INFINITY;
+      result.forEach((candidate, index) => {
+        if (candidate?.delivery || candidate?.localRequestId || candidate?.sender !== pending.sender
+          || candidate?.type !== pending.type || candidate?.text !== pending.text
+          || !sameAttachment(candidate, pending)) return;
+        const candidateTime = new Date(candidate.createdAt || 0).getTime();
+        if (!Number.isFinite(candidateTime) || !Number.isFinite(pendingTime)
+          || candidateTime < pendingTime - 1000 || candidateTime > pendingTime + 120000) return;
+        const distance = Math.abs(candidateTime - pendingTime);
+        if (distance < closestDistance) {
+          confirmedIndex = index;
+          closestDistance = distance;
+        }
+      });
+      if (confirmedIndex < 0) return;
+      const confirmed = result[confirmedIndex];
+      const localBase64 = pending.attachment?.localBase64;
+      result[confirmedIndex] = {
+        ...pending,
+        ...confirmed,
+        localRequestId: pending.localRequestId,
+        delivery: undefined,
+        retryRequest: undefined,
+        attachment: confirmed.attachment
+          ? { ...pending.attachment, ...confirmed.attachment, ...(localBase64 ? { localBase64 } : {}) }
+          : confirmed.attachment,
+      };
+      result.splice(pendingIndex, 1);
+    });
+    return result;
+  }
+
   function mergeChatPayload(cached, incoming) {
     if (!cached?.messages?.length) {
       return {
@@ -590,14 +638,14 @@ async function removeOutboxRequest(
       incomingMessages.forEach(put);
     }
 
-    const messages = Array.from(merged.values()).sort((left, right) => {
+    const messages = reconcileOptimisticMessages(Array.from(merged.values()).sort((left, right) => {
       const leftTime = new Date(left.createdAt || 0).getTime();
       const rightTime = new Date(right.createdAt || 0).getTime();
       const safeLeft = Number.isFinite(leftTime) ? leftTime : 0;
       const safeRight = Number.isFinite(rightTime) ? rightTime : 0;
       return safeLeft - safeRight
         || positions.get(chatMessageKey(left)) - positions.get(chatMessageKey(right));
-    });
+    }));
 
     return {
       ...cached,
@@ -621,7 +669,8 @@ async function removeOutboxRequest(
       if (!access?.chatToken) throw new Error("Чат ещё не создан.");
       const cached = entry?.payload || await readCachedChat(normalized);
       const incoming = await fetchChatHistory(order, access, lastServerMessageId(cached));
-      const payload = mergeChatPayload(cached, incoming);
+      const latest = state.chatCache.get(key)?.payload || await readCachedChat(normalized) || cached;
+      const payload = mergeChatPayload(latest, incoming);
       access.initialPayload = null;
       await cacheChat(normalized, payload);
       return payload;
@@ -1992,13 +2041,14 @@ return card;
     }
   }
 
-  function startChatPolling() {
+  function startChatPolling(elapsedMs = 0) {
     stopChatPolling();
     if (!state.current || document.hidden || elements.chatModal.hidden) return;
     const recentlyActive = Date.now() - state.chatActivityAt < CHAT_POLL_FAST_WINDOW;
+    const interval = recentlyActive ? CHAT_POLL_FAST_INTERVAL : CHAT_POLL_IDLE_INTERVAL;
     state.pollTimer = window.setTimeout(
       pollCurrentChat,
-      recentlyActive ? CHAT_POLL_FAST_INTERVAL : CHAT_POLL_IDLE_INTERVAL,
+      Math.max(100, interval - elapsedMs),
     );
   }
 
@@ -2021,6 +2071,7 @@ return card;
 
   async function pollCurrentChat() {
     if (!state.current || document.hidden || elements.chatModal.hidden) return;
+    const startedAt = Date.now();
     const orderId = state.current.order.orderId;
     try {
       const payload = await refreshChatCache(orderId, state.current.access);
@@ -2030,7 +2081,7 @@ return card;
       console.warn("Обновление чата отложено", error);
       setChatError("Не удалось обновить сообщения. Повторим автоматически.");
     } finally {
-      startChatPolling();
+      startChatPolling(Date.now() - startedAt);
     }
   }
 
@@ -2176,6 +2227,7 @@ return card;
 
     createdAt,
     delivery: "sending",
+    localRequestId: request.requestId,
     retryRequest: request,
   };
 }
