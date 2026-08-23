@@ -1,4 +1,4 @@
-const SHELL_CACHE = "catalog-shell-v81";
+const SHELL_CACHE = "catalog-shell-v83";
 const IMAGE_CACHE = "catalog-images-v5";
 const SHELL_FILES = [
   "./",

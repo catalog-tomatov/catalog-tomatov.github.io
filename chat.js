@@ -5,7 +5,9 @@
   const CHAT_DB_VERSION = 2;
   const CHAT_SEASON_KEY = "tomatoChatSeasonId";
   const CHAT_CONFIG_KEY = "tomatoChatSeasonConfig";
-  const CHAT_POLL_INTERVAL = 12000;
+  const CHAT_POLL_FAST_INTERVAL = 2500;
+  const CHAT_POLL_IDLE_INTERVAL = 8000;
+  const CHAT_POLL_FAST_WINDOW = 60000;
   const CHAT_PUSH_API_URL = "https://pult-sezona.asahi-higashi.chatgpt.site/api/push/customer";
   const CHAT_PUSH_SNOOZE_KEY = "tomatoChatPushSnoozedUntil";
   const CHAT_PUSH_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -40,10 +42,12 @@ const CHAT_PAYMENT = {
     config: null,
     summaries: new Map(),
     access: new Map(),
+    chatCache: new Map(),
     current: null,
     pendingFile: null,
     shareOrderId: "",
     pollTimer: 0,
+    chatActivityAt: 0,
     sellerRevealTimer: 0,
     pushPromptTimer: 0,
     objectUrls: new Set(),
@@ -364,12 +368,20 @@ const dbDelete = (store, key) =>
   }
 
   async function cacheChat(orderId, payload) {
+    const normalized = normalizeOrderId(orderId);
+    const key = orderKey(normalized);
+    const currentEntry = state.chatCache.get(key) || {};
+    state.chatCache.set(key, {
+      ...currentEntry,
+      payload,
+      updatedAt: Date.now(),
+    });
     try {
       await dbPut("chats", {
-        key: orderKey(orderId),
+        key,
         seasonId: state.config?.seasonId || "",
-        orderId: normalizeOrderId(orderId),
-        payload,
+        orderId: normalized,
+        payload: stripChatCacheBinary(payload),
         cachedAt: Date.now(),
       });
       return true;
@@ -380,11 +392,76 @@ const dbDelete = (store, key) =>
   }
 
   async function readCachedChat(orderId) {
+    const key = orderKey(orderId);
+    const memory = state.chatCache.get(key)?.payload;
+    if (memory) return memory;
     try {
-      return (await dbGet("chats", orderKey(orderId)))?.payload || null;
+      const row = await dbGet("chats", key);
+      if (row?.payload) {
+        state.chatCache.set(key, {
+          payload: row.payload,
+          updatedAt: Number(row.cachedAt) || 0,
+          request: null,
+        });
+      }
+      return row?.payload || null;
     } catch {
       return null;
     }
+  }
+
+  function stripChatCacheBinary(payload) {
+    if (!payload || !Array.isArray(payload.messages)) return payload;
+    return {
+      ...payload,
+      messages: payload.messages.map((message) => ({
+        ...message,
+        retryRequest: undefined,
+        attachment: message.attachment
+          ? { ...message.attachment, localBase64: undefined }
+          : message.attachment,
+      })),
+    };
+  }
+
+  function chatMessageKey(message) {
+    const messageId = String(message?.messageId || "").trim();
+    if (messageId) return `id:${messageId}`;
+    const attachment = message?.attachment || {};
+    return `fallback:${[
+      message?.createdAt || "",
+      message?.sender || "",
+      message?.type || "",
+      message?.text || "",
+      message?.attachmentId || attachment.attachmentId || "",
+      attachment.fileName || "",
+    ].join("|")}`;
+  }
+
+  function chatMessageSignature(message) {
+    const attachment = message?.attachment || {};
+    return JSON.stringify([
+      chatMessageKey(message),
+      message?.sender || "",
+      message?.type || "",
+      message?.text || "",
+      message?.createdAt || "",
+      message?.delivery || "",
+      message?.localRequestId || "",
+      attachment.attachmentId || "",
+      attachment.mime || "",
+      attachment.fileName || "",
+      Number(attachment.sizeBytes) || 0,
+      Boolean(attachment.localBase64),
+      JSON.stringify(message?.snapshot || null),
+    ]);
+  }
+
+  function summaryChanged(previous, next) {
+    if (!previous || !next) return false;
+    return String(previous.lastAt || "") !== String(next.lastAt || "")
+      || String(previous.lastMessage || "") !== String(next.lastMessage || "")
+      || Number(next.unread || 0) > Number(previous.unread || 0);
   }
 
   function outboxKey(orderId, requestId) {
@@ -470,87 +547,126 @@ async function removeOutboxRequest(
   }
 
   function mergeChatPayload(cached, incoming) {
-  if (!cached?.messages?.length) {
-    return incoming;
-  }
+    if (!cached?.messages?.length) {
+      return {
+        ...incoming,
+        messagesMode: "full",
+        messages: Array.isArray(incoming?.messages) ? incoming.messages : [],
+      };
+    }
 
-  // Запоминаем локальные превью уже загруженных фото.
-  const localImages = new Map();
-
-  cached.messages.forEach((message) => {
-    if (
-      message.messageId &&
+    const cachedMessages = Array.isArray(cached.messages) ? cached.messages : [];
+    const incomingMessages = Array.isArray(incoming?.messages) ? incoming.messages : [];
+    const localImages = new Map(cachedMessages.flatMap((message) => (
       message.attachment?.localBase64
-    ) {
-      localImages.set(
-        message.messageId,
-        message.attachment.localBase64
-      );
-    }
-  });
-
-  const preserveLocalImage = (message) => {
-    const localBase64 =
-      localImages.get(message?.messageId);
-
-    if (
-      !localBase64 ||
-      !message?.attachment
-    ) {
-      return message;
-    }
-
-    return {
-      ...message,
-      attachment: {
-        ...message.attachment,
-        localBase64,
-      },
+        ? [[chatMessageKey(message), message.attachment.localBase64]]
+        : []
+    )));
+    const preserveLocalState = (message, previous) => {
+      const localBase64 = previous?.attachment?.localBase64 || localImages.get(chatMessageKey(message));
+      return {
+        ...previous,
+        ...message,
+        attachment: message.attachment
+          ? { ...previous?.attachment, ...message.attachment, ...(localBase64 ? { localBase64 } : {}) }
+          : message.attachment,
+      };
     };
-  };
+    const merged = new Map();
+    const positions = new Map();
+    let position = 0;
+    const put = (message) => {
+      const key = chatMessageKey(message);
+      const previous = merged.get(key);
+      if (!positions.has(key)) positions.set(key, position++);
+      merged.set(key, preserveLocalState(message, previous));
+    };
 
-  // Полная история с сервера.
-  if (incoming?.messagesMode !== "delta") {
+    if (incoming?.messagesMode !== "delta") {
+      incomingMessages.forEach(put);
+      cachedMessages.filter((message) => message.delivery).forEach(put);
+    } else {
+      cachedMessages.forEach(put);
+      incomingMessages.forEach(put);
+    }
+
+    const messages = Array.from(merged.values()).sort((left, right) => {
+      const leftTime = new Date(left.createdAt || 0).getTime();
+      const rightTime = new Date(right.createdAt || 0).getTime();
+      const safeLeft = Number.isFinite(leftTime) ? leftTime : 0;
+      const safeRight = Number.isFinite(rightTime) ? rightTime : 0;
+      return safeLeft - safeRight
+        || positions.get(chatMessageKey(left)) - positions.get(chatMessageKey(right));
+    });
+
     return {
+      ...cached,
       ...incoming,
-      messages: Array.isArray(incoming?.messages)
-        ? incoming.messages.map(preserveLocalImage)
-        : [],
+      order: incoming?.order || cached.order,
+      summary: incoming?.summary || cached.summary,
+      messagesMode: "full",
+      messages,
     };
   }
 
-  // Только новые сообщения.
-  const known = new Set(
-    cached.messages.map(
-      (message) => message.messageId
-    )
-  );
+  async function refreshChatCache(orderId, suppliedAccess = null) {
+    const normalized = normalizeOrderId(orderId);
+    const key = orderKey(normalized);
+    let entry = state.chatCache.get(key);
+    if (entry?.request) return entry.request;
+    const request = (async () => {
+      const order = findSavedOrder(normalized);
+      if (!order) throw new Error("Сохранённый заказ не найден.");
+      const access = suppliedAccess || await getAccess(normalized);
+      if (!access?.chatToken) throw new Error("Чат ещё не создан.");
+      const cached = entry?.payload || await readCachedChat(normalized);
+      const incoming = await fetchChatHistory(order, access, lastServerMessageId(cached));
+      const payload = mergeChatPayload(cached, incoming);
+      access.initialPayload = null;
+      await cacheChat(normalized, payload);
+      return payload;
+    })();
+    entry = entry || { payload: null, updatedAt: 0 };
+    entry.request = request;
+    state.chatCache.set(key, entry);
+    try {
+      return await request;
+    } finally {
+      const currentEntry = state.chatCache.get(key);
+      if (currentEntry?.request === request) currentEntry.request = null;
+    }
+  }
 
-  const additions = (incoming.messages || [])
-    .filter(
-      (message) =>
-        !known.has(message.messageId)
-    )
-    .map(preserveLocalImage);
+  async function showRefreshedChatIfOpen(orderId, payload, scrollToEnd = false) {
+    if (
+      !state.current
+      || normalizeOrderId(state.current.order?.orderId) !== normalizeOrderId(orderId)
+      || elements.chatModal.hidden
+    ) return false;
+    const previousSignature = (state.current.payload?.messages || []).map(chatMessageSignature).join("\n");
+    const nextSignature = (payload.messages || []).map(chatMessageSignature).join("\n");
+    state.current.payload = payload;
+    renderChatPayload(payload, scrollToEnd);
+    if (previousSignature !== nextSignature) {
+      state.chatActivityAt = Date.now();
+      startChatPolling();
+    }
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await markCurrentChatRead();
+    return true;
+  }
 
-  return {
-  ...cached,
-  ...incoming,
-
-  order:
-    incoming.order || cached.order,
-
-  summary:
-    incoming.summary || cached.summary,
-
-  messagesMode: "full",
-
-  messages: [
-    ...cached.messages,
-    ...additions,
-  ],
-  };
-}
+  function preloadOrderChat(orderId) {
+    void refreshChatCache(orderId)
+      .then((payload) => showRefreshedChatIfOpen(orderId, payload, false))
+      .catch((error) => {
+        if (
+          state.current
+          && normalizeOrderId(state.current.order?.orderId) === normalizeOrderId(orderId)
+        ) setChatError("Не удалось обновить сообщения. Повторим автоматически.");
+        else if (error?.code !== "REQUEST_TIMEOUT") console.warn("Предзагрузка чата отложена", error);
+      });
+  }
 
   async function clearClosedClientData() {
     [
@@ -563,6 +679,7 @@ async function removeOutboxRequest(
     savedOrders = [];
     state.summaries.clear();
     state.access.clear();
+    state.chatCache.clear();
     try { await clearChatDatabase(); } catch (error) { console.warn("Не удалось очистить локальный чат", error); }
   }
 
@@ -573,6 +690,7 @@ async function removeOutboxRequest(
   }
 
   async function initializeOrderChatClient() {
+    const previousSummaries = new Map(state.summaries);
     try {
       state.config = await fetchChatConfig();
     } catch (error) {
@@ -648,17 +766,22 @@ async function removeOutboxRequest(
         }
       });
       persistSavedOrders();
+      const changedOrderIds = [];
       await Promise.all(result.summaries.map(async (item) => {
         const itemOrderId = item.order?.orderId || item.summary?.orderId;
         const cached = await readCachedChat(itemOrderId);
-        return cacheChat(itemOrderId, {
+        const key = normalizeOrderId(itemOrderId);
+        const previous = previousSummaries.get(key) || cached?.summary;
+        await cacheChat(itemOrderId, {
           ...(cached || {}),
           order: item.order || cached?.order,
           summary: item.summary || cached?.summary,
           messagesMode: "full",
           messages: Array.isArray(cached?.messages) ? cached.messages : [],
         });
+        if (summaryChanged(previous, item.summary)) changedOrderIds.push(itemOrderId);
       }));
+      changedOrderIds.forEach(preloadOrderChat);
     } catch (error) {
       if (error?.code !== "REQUEST_TIMEOUT") {
         console.warn("Не удалось обновить сводки чата", error);
@@ -1189,6 +1312,11 @@ async function resumeOutboxForCurrentChat() {
   async function openOrderChat(orderId) {
     const order = findSavedOrder(orderId);
     if (!order) throw new Error("Сохранённый заказ не найден.");
+    const normalizedOrderId = normalizeOrderId(order.orderId);
+    const sameChat = state.current
+      && normalizeOrderId(state.current.order?.orderId) === normalizedOrderId;
+    const previousCurrent = sameChat ? state.current : null;
+    state.chatActivityAt = Date.now();
     stopChatPolling();
 
   if (state.sellerRevealTimer) {
@@ -1198,28 +1326,32 @@ async function resumeOutboxForCurrentChat() {
 
   state.current = {
   order,
-  access: null,
-  payload: null,
-  sellerRevealAt: 0,
+  access: previousCurrent?.access || null,
+  payload: previousCurrent?.payload || state.chatCache.get(orderKey(order.orderId))?.payload || null,
+  sellerRevealAt: previousCurrent?.sellerRevealAt || 0,
   };
     elements.chatTitle.textContent = `Чат по заказу ${normalizeOrderId(order.orderId)}`;
     elements.chatCustomer.textContent = order.name || "";
     elements.chatStatus.textContent = "ОБНОВЛЯЕМ";
     elements.chatStatus.className = "order-chat-status";
-    elements.chatMessages.replaceChildren();
+    if (!sameChat) {
+      elements.chatMessages.replaceChildren();
+      delete elements.chatMessages.dataset.orderId;
+    }
     elements.chatComposer.hidden = true;
     elements.quota.textContent = "";
     setChatError("");
-    showChatLoading(true);
+    showChatLoading(!state.current.payload);
     closeSavedOrders();
     showOverlay(elements.chatModal);
 
-    const cached = await readCachedChat(order.orderId);
-    if (cached?.messages?.length) {
+    const cached = state.current.payload || await readCachedChat(order.orderId);
+    if (!state.current || normalizeOrderId(state.current.order?.orderId) !== normalizedOrderId) return;
+    if (cached && Array.isArray(cached.messages)) {
   // Старый уже существующий чат открываем сразу,
   // без повторной шестисекундной задержки.
   state.current.payload = cached;
-  renderChatPayload(cached, true);
+  renderChatPayload(cached, !sameChat);
   showChatLoading(false);
 
 } else {
@@ -1254,16 +1386,14 @@ async function resumeOutboxForCurrentChat() {
 }
 
     try {
-      const access = await ensureChatAccess(order);
+      const access = state.current.access || await ensureChatAccess(order);
+      if (!state.current || normalizeOrderId(state.current.order?.orderId) !== normalizedOrderId) return;
       state.current.access = access;
       scheduleChatPushPrompt({ ...access, orderId: order.orderId });
       await resumeOutboxForCurrentChat();
-      const incoming = await fetchChatHistory(order, access, lastServerMessageId(state.current.payload));
-      const payload = mergeChatPayload(state.current.payload, incoming);
-      state.current.payload = payload;
-      await cacheChat(order.orderId, payload);
-      renderChatPayload(payload, true);
-      await markCurrentChatRead();
+      const payload = await refreshChatCache(order.orderId, access);
+      await showRefreshedChatIfOpen(order.orderId, payload, !cached?.messages?.length);
+      setChatError("");
       startChatPolling();
     } catch (error) {
       if (state.current.payload?.messages?.length) {
@@ -1310,36 +1440,67 @@ async function resumeOutboxForCurrentChat() {
 
   function renderChatPayload(payload, scrollToEnd = false) {
     if (!payload?.order || !Array.isArray(payload.messages)) return;
+    const orderId = normalizeOrderId(payload.order.orderId || state.current?.order?.orderId);
     const wasNearBottom = elements.chatMessages.scrollHeight - elements.chatMessages.scrollTop
       - elements.chatMessages.clientHeight < 90;
+    const previousScrollTop = elements.chatMessages.scrollTop;
     updateChatHeader(payload.order);
-    elements.chatMessages.replaceChildren();
-    let previousDate = "";
-    payload.messages.forEach((message) => {
-      if (
+    const visibleMessages = payload.messages.filter((message) => !(
     state.current?.sellerRevealAt &&
     Date.now() < state.current.sellerRevealAt &&
     message.sender === "seller"
-    ) {
-    return;
-    }
+    ));
+    const newKeys = visibleMessages.map(chatMessageKey);
+    const existingRows = Array.from(elements.chatMessages.querySelectorAll("[data-chat-message-key]"));
+    const existingKeys = existingRows.map((row) => row.dataset.chatMessageKey);
+    const canAppend = elements.chatMessages.dataset.orderId === orderId
+      && existingKeys.length <= newKeys.length
+      && existingKeys.every((key, index) => key === newKeys[index]
+        && existingRows[index].dataset.chatMessageDate === chatDateKey(visibleMessages[index]?.createdAt));
+
+    const appendMessage = (message, previousDate) => {
       const currentDate = chatDateKey(message.createdAt);
       if (currentDate && currentDate !== previousDate) {
         elements.chatMessages.appendChild(renderChatDateDivider(message.createdAt));
-        previousDate = currentDate;
       }
       elements.chatMessages.appendChild(renderChatMessage(message));
-    });
+      return currentDate || previousDate;
+    };
+
+    if (!canAppend) {
+      elements.chatMessages.replaceChildren();
+      let previousDate = "";
+      visibleMessages.forEach((message) => { previousDate = appendMessage(message, previousDate); });
+    } else {
+      existingRows.forEach((row, index) => {
+        const nextSignature = chatMessageSignature(visibleMessages[index]);
+        if (row.dataset.chatMessageSignature !== nextSignature) {
+          row.replaceWith(renderChatMessage(visibleMessages[index]));
+        }
+      });
+      let previousDate = existingRows.length
+        ? chatDateKey(visibleMessages[existingRows.length - 1]?.createdAt)
+        : "";
+      visibleMessages.slice(existingRows.length).forEach((message) => {
+        previousDate = appendMessage(message, previousDate);
+      });
+    }
+    elements.chatMessages.dataset.orderId = orderId;
     elements.chatComposer.hidden = false;
     updateQuota(payload.summary);
     if (scrollToEnd || wasNearBottom) {
       requestAnimationFrame(() => { elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight; });
+    } else if (!canAppend) {
+      requestAnimationFrame(() => { elements.chatMessages.scrollTop = previousScrollTop; });
     }
   }
 
   function renderChatMessage(message) {
     const row = document.createElement("div");
     row.className = `chat-message ${message.sender || "system"}`;
+    row.dataset.chatMessageKey = chatMessageKey(message);
+    row.dataset.chatMessageSignature = chatMessageSignature(message);
+    row.dataset.chatMessageDate = chatDateKey(message.createdAt);
     if (message.type === "order_card") {
       row.appendChild(renderOrderCard(message));
       return row;
@@ -1793,26 +1954,61 @@ return card;
 
   async function markCurrentChatRead() {
     if (!state.current?.access?.chatToken) return;
+    const current = state.current;
+    const unread = Number(current.payload?.summary?.unread
+      ?? state.summaries.get(normalizeOrderId(current.order.orderId))?.unread
+      ?? 0);
+    if (unread <= 0) return;
+    if (current.readPromise) return current.readPromise;
+    const orderId = normalizeOrderId(current.order.orderId);
+    const request = (async () => {
     try {
       await apiPost({
         action: "chat_read",
-        orderId: state.current.order.orderId,
-        chatToken: state.current.access.chatToken,
+        orderId: current.order.orderId,
+        chatToken: current.access.chatToken,
       });
-      const key = normalizeOrderId(state.current.order.orderId);
-      const summary = state.summaries.get(key);
-      if (summary) state.summaries.set(key, { ...summary, unread: 0 });
+      if (current.payload?.summary) {
+        current.payload = {
+          ...current.payload,
+          summary: { ...current.payload.summary, unread: 0 },
+        };
+        await cacheChat(orderId, current.payload);
+      }
+      const summary = state.summaries.get(orderId);
+      if (summary) state.summaries.set(orderId, { ...summary, unread: 0 });
       updateAppBadge();
       renderSavedOrdersSummary();
     } catch (error) {
       console.warn("Не удалось отметить чат прочитанным", error);
     }
+    })();
+    current.readPromise = request;
+    try { await request; } finally {
+      if (current.readPromise === request) current.readPromise = null;
+    }
   }
 
   function startChatPolling() {
     stopChatPolling();
-    if (!state.current || document.hidden) return;
-    state.pollTimer = window.setTimeout(pollCurrentChat, CHAT_POLL_INTERVAL);
+    if (!state.current || document.hidden || elements.chatModal.hidden) return;
+    const recentlyActive = Date.now() - state.chatActivityAt < CHAT_POLL_FAST_WINDOW;
+    state.pollTimer = window.setTimeout(
+      pollCurrentChat,
+      recentlyActive ? CHAT_POLL_FAST_INTERVAL : CHAT_POLL_IDLE_INTERVAL,
+    );
+  }
+
+  function activateChatPolling(refreshNow = false) {
+    const wasIdle = Date.now() - state.chatActivityAt >= CHAT_POLL_FAST_WINDOW;
+    state.chatActivityAt = Date.now();
+    if (!state.current || document.hidden || elements.chatModal.hidden) return;
+    if (refreshNow) {
+      stopChatPolling();
+      void pollCurrentChat();
+    } else if (wasIdle || !state.pollTimer) {
+      startChatPolling();
+    }
   }
 
   function stopChatPolling() {
@@ -1822,29 +2018,14 @@ return card;
 
   async function pollCurrentChat() {
     if (!state.current || document.hidden || elements.chatModal.hidden) return;
+    const orderId = state.current.order.orderId;
     try {
-      const incoming = await fetchChatHistory(
-        state.current.order,
-        state.current.access,
-        lastServerMessageId(state.current.payload),
-      );
-      const payload = mergeChatPayload(state.current.payload, incoming);
-      const previousIds = (state.current.payload?.messages || []).map((item) => item.messageId).join("|");
-      const previousStatus = state.current.payload?.order?.status || "";
-      const nextIds = (payload.messages || []).map((item) => item.messageId).join("|");
-      state.current.payload = payload;
-      state.current.access.initialPayload = null;
-      await cacheChat(state.current.order.orderId, payload);
-      if (previousIds !== nextIds || previousStatus !== payload.order?.status) {
-        renderChatPayload(payload, true);
-      } else {
-        updateChatHeader(payload.order);
-        updateQuota(payload.summary);
-      }
-      await markCurrentChatRead();
+      const payload = await refreshChatCache(orderId, state.current.access);
+      await showRefreshedChatIfOpen(orderId, payload, false);
       setChatError("");
     } catch (error) {
       console.warn("Обновление чата отложено", error);
+      setChatError("Не удалось обновить сообщения. Повторим автоматически.");
     } finally {
       startChatPolling();
     }
@@ -2010,6 +2191,8 @@ function queuedDelivery(request) {
   ) {
     return;
   }
+
+  activateChatPolling(false);
 
   const text =
     elements.chatInput.value.trim();
@@ -2467,7 +2650,13 @@ function queuedDelivery(request) {
   elements.chooseMax?.addEventListener("click", () => void chooseMax());
   elements.closeChat?.addEventListener("click", closeOrderChat);
   elements.chatComposer?.addEventListener("submit", sendComposerMessage);
+  const activateChatFromTouch = () => activateChatPolling(
+    Date.now() - state.chatActivityAt >= CHAT_POLL_FAST_WINDOW,
+  );
+  elements.chatMessages?.addEventListener("pointerdown", activateChatFromTouch, { passive: true });
+  elements.chatComposer?.addEventListener("pointerdown", activateChatFromTouch, { passive: true });
   elements.chatInput?.addEventListener("input", () => {
+    activateChatPolling(false);
     elements.chatInput.style.height = "auto";
     elements.chatInput.style.height = `${Math.min(elements.chatInput.scrollHeight, 116)}px`;
   });
@@ -2488,8 +2677,9 @@ function queuedDelivery(request) {
     const payload = event.data || {};
     if (payload.type !== "catalog-chat-message") return;
     const orderId = normalizeOrderId(payload.orderId);
+    if (orderId) preloadOrderChat(orderId);
     if (state.current && normalizeOrderId(state.current.order?.orderId) === orderId) {
-      void pollCurrentChat();
+      activateChatPolling(false);
     } else {
       void refreshChatSummaries();
     }
@@ -2497,7 +2687,7 @@ function queuedDelivery(request) {
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) stopChatPolling();
     else if (state.current && !elements.chatModal.hidden) {
-      void pollCurrentChat();
+      activateChatPolling(true);
     } else {
       void refreshChatSummaries();
     }
