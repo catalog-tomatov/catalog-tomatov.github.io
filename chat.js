@@ -8,7 +8,6 @@
   const CHAT_POLL_FAST_INTERVAL = 2500;
   const CHAT_POLL_IDLE_INTERVAL = 8000;
   const CHAT_POLL_FAST_WINDOW = 60000;
-  const CHAT_PUSH_API_URL = "https://pult-sezona.asahi-higashi.chatgpt.site/api/push/customer";
   const CHAT_PUSH_SNOOZE_KEY = "tomatoChatPushSnoozedUntil";
   const CHAT_PUSH_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -254,13 +253,26 @@ const dbDelete = (store, key) =>
     return Uint8Array.from(binary, (character) => character.charCodeAt(0));
   }
 
+  async function relayPushRequest(body, timeout = 30000) {
+    const result = await fetchJsonWithTimeout(CATALOG_API_URL, {
+      method: "POST",
+      body: JSON.stringify(body),
+      cache: "no-store",
+    }, timeout);
+    if (!result || result.success !== true) {
+      const error = new Error("Сервис уведомлений временно недоступен.");
+      error.code = result?.error || "PUSH_RELAY_UNAVAILABLE";
+      error.httpStatus = Number(result?.httpStatus) || 0;
+      throw error;
+    }
+    return result;
+  }
+
   async function getChatPushSubscription() {
     const registration = await navigator.serviceWorker.ready;
     let subscription = await registration.pushManager.getSubscription();
     if (subscription) return subscription;
-    const response = await fetch(`${CHAT_PUSH_API_URL}/config`, { cache: "no-store" });
-    if (!response.ok) throw new Error("Сервис уведомлений временно недоступен.");
-    const payload = await response.json();
+    const payload = await relayPushRequest({ action: "pushConfig" }, 20000);
     if (!payload.publicKey) throw new Error("Сервис уведомлений не настроен.");
     subscription = await registration.pushManager.subscribe({
       userVisibleOnly: true,
@@ -272,17 +284,12 @@ const dbDelete = (store, key) =>
   async function saveChatPushSubscription(subscription, access) {
     const orderId = normalizeOrderId(access?.orderId);
     if (!orderId || !access?.chatToken) return false;
-    const response = await fetch(`${CHAT_PUSH_API_URL}/subscribe`, {
-      method: "POST",
-      cache: "no-store",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        orderId,
-        chatToken: access.chatToken,
-        subscription: subscription.toJSON(),
-      }),
+    await relayPushRequest({
+      action: "pushSubscribe",
+      orderId,
+      chatToken: access.chatToken,
+      subscription: subscription.toJSON(),
     });
-    if (!response.ok) throw new Error("Не удалось сохранить уведомления для заказа.");
     return true;
   }
 

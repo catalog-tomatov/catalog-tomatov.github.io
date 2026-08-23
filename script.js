@@ -390,6 +390,69 @@ async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 12000) {
   }
 }
 
+function initGptRelayDiagnostic() {
+  const container = document.getElementById("gptRelayDiagnostic");
+  const button = document.getElementById("runGptRelayTest");
+  const result = document.getElementById("gptRelayResult");
+  if (!container || !button || !result) return;
+
+  const enabled = new URLSearchParams(window.location.search).get("relay-test") === "1";
+  if (!enabled) return;
+  container.hidden = false;
+
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    button.textContent = "Проверяем…";
+    result.className = "";
+    result.textContent = "Этап Каталог → Apps Script: отправляем запрос…";
+
+    try {
+      const response = await fetchJsonWithTimeout(
+        CATALOG_API_URL,
+        {
+          method: "POST",
+          body: JSON.stringify({ action: "testGptRelay" }),
+        },
+        20000,
+      );
+
+      if (
+        !response ||
+        typeof response.ok !== "boolean" ||
+        !Number.isFinite(Number(response.httpStatus)) ||
+        !Number.isFinite(Number(response.elapsedMs))
+      ) {
+        throw new Error("Этап Apps Script: действие testGptRelay не найдено или вернуло неверный ответ.");
+      }
+
+      const httpStatus = Number(response.httpStatus);
+      const elapsedMs = Math.max(0, Math.round(Number(response.elapsedMs)));
+      if (response.ok && httpStatus >= 200 && httpStatus < 300) {
+        result.className = "success";
+        result.textContent = `Связь через посредника работает · HTTP ${httpStatus} · ${elapsedMs} мс`;
+      } else if (!httpStatus) {
+        throw new Error(`Этап Apps Script → /api/health: соединение не установлено · ${elapsedMs} мс.`);
+      } else {
+        throw new Error(`Этап /api/health: сервер вернул HTTP ${httpStatus} · ${elapsedMs} мс.`);
+      }
+    } catch (error) {
+      result.className = "error";
+      if (error?.code === "REQUEST_TIMEOUT") {
+        result.textContent = "Этап Каталог → Apps Script: превышено время ожидания 20 секунд.";
+      } else if (String(error?.message || "").startsWith("Этап ")) {
+        result.textContent = String(error.message);
+      } else {
+        result.textContent = `Этап Каталог → Apps Script: ${error?.message || "запрос не выполнен"}.`;
+      }
+    } finally {
+      button.disabled = false;
+      button.textContent = "Проверить ещё раз";
+    }
+  });
+}
+
+initGptRelayDiagnostic();
+
 function readCatalogCache(allowExpired = false) {
   try {
     const cached = JSON.parse(localStorage.getItem(CATALOG_CACHE_KEY) || "null");
