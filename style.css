@@ -6801,7 +6801,7 @@ button:disabled,
 .order-chat-max-warning { margin:12px 13px 0; padding:13px; border:1px solid #ead8c2; border-radius:16px; background:#fff7ea; color:#5f5146; }
 .order-chat-max-warning>strong,.order-chat-max-warning>span { display:block; }
 .order-chat-max-warning>strong { color:#3f342d; font-size:16px; }
-.order-chat-max-warning>span { margin-top:5px; font-size:13px; line-height:1.4; }
+.order-chat-max-warning>span { margin-top:5px; font-size:14.5px; line-height:1.4; }
 .order-chat-max-warning>div { display:grid; grid-template-columns:1fr 1.35fr; gap:8px; margin-top:11px; }
 .order-chat-max-warning button { min-height:40px; border:1px solid #ddc9b1; border-radius:11px; background:#fffdf9; color:#6e5d50; font:inherit; font-weight:750; }
 .order-chat-max-warning button:last-child { border-color:#168d6d; background:#168d6d; color:#fff; }
