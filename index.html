@@ -950,6 +950,14 @@ content="summary_large_image">
     <div class="order-chat-privacy"><span aria-hidden="true">🔒</span><span>Переписку по заказу видят только покупатель и продавец.</span></div>
     <div id="orderChatError" class="order-chat-error" role="alert" hidden></div>
     <div id="orderChatLoading" class="order-chat-loading">Открываем чат…</div>
+    <aside id="orderChatMaxWarning" class="order-chat-max-warning" hidden>
+      <strong>Вы выбрали общение через MAX</strong>
+      <span>Если переписка с продавцом уже началась в MAX, создавать второй чат здесь необязательно.</span>
+      <div>
+        <button type="button" id="orderChatMaxBack">Вернуться</button>
+        <button type="button" id="orderChatMaxContinue">Продолжить здесь</button>
+      </div>
+    </aside>
     <div id="orderChatMessages" class="order-chat-messages" aria-live="polite"></div>
     <div id="orderChatFilePreview" class="order-chat-file-preview" hidden>
       <span id="orderChatFileName"></span>

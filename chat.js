@@ -51,6 +51,7 @@ const CHAT_PAYMENT = {
     pushPromptTimer: 0,
     objectUrls: new Set(),
     createPromises: new Map(),
+    readStates: new Map(),
     initialized: false,
   };
 
@@ -67,6 +68,9 @@ const CHAT_PAYMENT = {
     chatStatus: document.getElementById("orderChatStatus"),
     chatError: document.getElementById("orderChatError"),
     chatLoading: document.getElementById("orderChatLoading"),
+    maxWarning: document.getElementById("orderChatMaxWarning"),
+    maxBack: document.getElementById("orderChatMaxBack"),
+    maxContinue: document.getElementById("orderChatMaxContinue"),
     chatMessages: document.getElementById("orderChatMessages"),
     chatComposer: document.getElementById("orderChatComposer"),
     chatInput: document.getElementById("orderChatInput"),
@@ -432,8 +436,10 @@ const dbDelete = (store, key) =>
   }
 
   function chatMessageKey(message) {
-    const localRequestId = String(message?.localRequestId || "").trim();
-    if (localRequestId && message?.delivery) return `request:${localRequestId}`;
+    const clientMessageId = String(
+      message?.clientMessageId || message?.localRequestId || "",
+    ).trim();
+    if (clientMessageId) return `client:${clientMessageId}`;
     const messageId = String(message?.messageId || "").trim();
     if (messageId) return `id:${messageId}`;
     const attachment = message?.attachment || {};
@@ -473,6 +479,33 @@ const dbDelete = (store, key) =>
       || Number(next.unread || 0) > Number(previous.unread || 0);
   }
 
+  function suppressReadSummary(orderId, summary) {
+    if (!summary) return summary;
+    const readState = state.readStates.get(normalizeOrderId(orderId));
+    if (!readState) return summary;
+    const floor = Date.parse(readState.lastAt || "") || 0;
+    const incoming = Date.parse(summary.lastAt || "") || 0;
+    return incoming <= floor ? { ...summary, unread: 0 } : summary;
+  }
+
+  function clearUnreadLocally(orderId, payload = null) {
+    const normalized = normalizeOrderId(orderId);
+    const currentSummary = payload?.summary || state.summaries.get(normalized) || null;
+    const previousState = state.readStates.get(normalized) || {};
+    state.readStates.set(normalized, {
+      ...previousState,
+      lastAt: currentSummary?.lastAt || previousState.lastAt || "",
+    });
+    if (currentSummary) {
+      const cleared = { ...currentSummary, unread: 0 };
+      state.summaries.set(normalized, cleared);
+      if (payload?.summary) payload.summary = cleared;
+    }
+    updateAppBadge();
+    renderSavedOrdersSummary();
+    if (payload) void cacheChat(normalized, payload);
+  }
+
   function outboxKey(orderId, requestId) {
   return `${orderKey(orderId)}|${requestId}`;
 }
@@ -490,6 +523,7 @@ async function saveOutboxRequest(
     action: "chat_send",
     orderId,
     requestId: request.requestId,
+    clientMessageId: request.clientMessageId || request.requestId,
     text: request.text || "",
     attachment: request.attachment || null,
   };
@@ -556,49 +590,9 @@ async function removeOutboxRequest(
   }
 
   function reconcileOptimisticMessages(messages) {
-    const result = [...messages];
-    const pendingMessages = result.filter((message) => (
-      Boolean(message?.delivery && message?.localRequestId)
-    ));
-    const sameAttachment = (left, right) => (
-      String(left?.attachment?.fileName || "") === String(right?.attachment?.fileName || "")
-      && Number(left?.attachment?.sizeBytes || 0) === Number(right?.attachment?.sizeBytes || 0)
-    );
-    pendingMessages.forEach((pending) => {
-      const pendingIndex = result.indexOf(pending);
-      if (pendingIndex < 0) return;
-      const pendingTime = new Date(pending.createdAt || 0).getTime();
-      let confirmedIndex = -1;
-      let closestDistance = Number.POSITIVE_INFINITY;
-      result.forEach((candidate, index) => {
-        if (candidate?.delivery || candidate?.localRequestId || candidate?.sender !== pending.sender
-          || candidate?.type !== pending.type || candidate?.text !== pending.text
-          || !sameAttachment(candidate, pending)) return;
-        const candidateTime = new Date(candidate.createdAt || 0).getTime();
-        if (!Number.isFinite(candidateTime) || !Number.isFinite(pendingTime)
-          || candidateTime < pendingTime - 1000 || candidateTime > pendingTime + 120000) return;
-        const distance = Math.abs(candidateTime - pendingTime);
-        if (distance < closestDistance) {
-          confirmedIndex = index;
-          closestDistance = distance;
-        }
-      });
-      if (confirmedIndex < 0) return;
-      const confirmed = result[confirmedIndex];
-      const localBase64 = pending.attachment?.localBase64;
-      result[confirmedIndex] = {
-        ...pending,
-        ...confirmed,
-        localRequestId: pending.localRequestId,
-        delivery: undefined,
-        retryRequest: undefined,
-        attachment: confirmed.attachment
-          ? { ...pending.attachment, ...confirmed.attachment, ...(localBase64 ? { localBase64 } : {}) }
-          : confirmed.attachment,
-      };
-      result.splice(pendingIndex, 1);
-    });
-    return result;
+    // Reconciliation is based only on stable IDs. Equal text and nearby
+    // timestamps are valid user actions and must never be collapsed.
+    return [...messages];
   }
 
   function mergeChatPayload(cached, incoming) {
@@ -619,9 +613,18 @@ async function removeOutboxRequest(
     )));
     const preserveLocalState = (message, previous) => {
       const localBase64 = previous?.attachment?.localBase64 || localImages.get(chatMessageKey(message));
+      const confirmed = Boolean(
+        message?.messageId &&
+        !String(message.messageId).startsWith("pending_") &&
+        !message.delivery
+      );
       return {
         ...previous,
         ...message,
+        clientMessageId: message.clientMessageId || previous?.clientMessageId || previous?.localRequestId,
+        localRequestId: message.clientMessageId || previous?.localRequestId,
+        delivery: confirmed ? undefined : (message.delivery ?? previous?.delivery),
+        retryRequest: confirmed ? undefined : (message.retryRequest ?? previous?.retryRequest),
         attachment: message.attachment
           ? { ...previous?.attachment, ...message.attachment, ...(localBase64 ? { localBase64 } : {}) }
           : message.attachment,
@@ -638,8 +641,8 @@ async function removeOutboxRequest(
     };
 
     if (incoming?.messagesMode !== "delta") {
-      incomingMessages.forEach(put);
       cachedMessages.filter((message) => message.delivery).forEach(put);
+      incomingMessages.forEach(put);
     } else {
       cachedMessages.forEach(put);
       incomingMessages.forEach(put);
@@ -678,6 +681,7 @@ async function removeOutboxRequest(
       const incoming = await fetchChatHistory(order, access, lastServerMessageId(cached));
       const latest = state.chatCache.get(key)?.payload || await readCachedChat(normalized) || cached;
       const payload = mergeChatPayload(latest, incoming);
+      payload.summary = suppressReadSummary(normalized, payload.summary);
       access.initialPayload = null;
       await cacheChat(normalized, payload);
       return payload;
@@ -707,8 +711,10 @@ async function removeOutboxRequest(
       state.chatActivityAt = Date.now();
       startChatPolling();
     }
-    await new Promise((resolve) => requestAnimationFrame(resolve));
-    await markCurrentChatRead();
+    const readToken = state.current.access?.chatToken || "";
+    if (Number(payload.summary?.unread || 0) > 0 && readToken) {
+      void markChatReadSnapshot(orderId, readToken, payload);
+    }
     return true;
   }
 
@@ -746,7 +752,6 @@ async function removeOutboxRequest(
   }
 
   async function initializeOrderChatClient() {
-    const previousSummaries = new Map(state.summaries);
     try {
       state.config = await fetchChatConfig();
     } catch (error) {
@@ -784,6 +789,11 @@ async function removeOutboxRequest(
   }
 
   async function refreshChatSummaries() {
+    const previousSummaries = new Map(state.summaries);
+    const pendingReads = Array.from(state.readStates.values())
+      .map((item) => item?.promise)
+      .filter(Boolean);
+    if (pendingReads.length) await Promise.allSettled(pendingReads);
     if (!state.config || state.config.seasonClosed || !savedOrders.length) {
       state.summaries.clear();
       updateAppBadge();
@@ -804,6 +814,7 @@ async function removeOutboxRequest(
       result.summaries.forEach((item) => {
         const key = normalizeOrderId(item.order?.orderId || item.summary?.orderId);
         if (!key) return;
+        item.summary = suppressReadSummary(key, item.summary);
         state.summaries.set(key, item.summary);
         const saved = findSavedOrder(key);
         if (saved && item.order) {
@@ -1094,7 +1105,10 @@ async function removeOutboxRequest(
           .timeZone,
 
       emptyInitialChat:
-        order.contactChannel === "max",
+        order.contactChannel !== "chat",
+      contactChannel: order.contactChannel === "max" || order.contactChannel === "chat"
+        ? order.contactChannel
+        : "",
     }, 25000);
 
     await putAccess(
@@ -1163,7 +1177,7 @@ async function removeOutboxRequest(
 
   const messages = [];
 
-if (order.contactChannel !== "max") {
+if (order.contactChannel === "chat") {
   messages.push(
     {
       messageId:
@@ -1372,6 +1386,7 @@ async function resumeOutboxForCurrentChat() {
     const sameChat = state.current
       && normalizeOrderId(state.current.order?.orderId) === normalizedOrderId;
     const previousCurrent = sameChat ? state.current : null;
+    const earlyAccessPromise = getAccess(order.orderId).catch(() => null);
     state.chatActivityAt = Date.now();
     stopChatPolling();
 
@@ -1385,6 +1400,7 @@ async function resumeOutboxForCurrentChat() {
   access: previousCurrent?.access || null,
   payload: previousCurrent?.payload || state.chatCache.get(orderKey(order.orderId))?.payload || null,
   sellerRevealAt: previousCurrent?.sellerRevealAt || 0,
+  maxWarningDismissed: false,
   };
     elements.chatTitle.textContent = `Чат по заказу ${normalizeOrderId(order.orderId)}`;
     elements.chatCustomer.textContent = order.name || "";
@@ -1400,6 +1416,14 @@ async function resumeOutboxForCurrentChat() {
     showChatLoading(!state.current.payload);
     closeSavedOrders();
     showOverlay(elements.chatModal);
+    clearUnreadLocally(normalizedOrderId, state.current.payload);
+    const earlyReadPayload = state.current.payload;
+    void earlyAccessPromise.then((earlyAccess) => {
+      if (earlyAccess?.chatToken) {
+        return markChatReadSnapshot(normalizedOrderId, earlyAccess.chatToken, earlyReadPayload);
+      }
+      return undefined;
+    });
 
     const cached = state.current.payload || await readCachedChat(order.orderId);
     if (!state.current || normalizeOrderId(state.current.order?.orderId) !== normalizedOrderId) return;
@@ -1442,7 +1466,21 @@ async function resumeOutboxForCurrentChat() {
 }
 
     try {
-      const access = state.current.access || await ensureChatAccess(order);
+      const earlyAccess = await earlyAccessPromise;
+      const currentAccess = state.current &&
+        normalizeOrderId(state.current.order?.orderId) === normalizedOrderId
+        ? state.current.access
+        : null;
+      const access = currentAccess || (earlyAccess?.chatToken ? earlyAccess : null) || await ensureChatAccess(order);
+      const currentReadPayload = state.current &&
+        normalizeOrderId(state.current.order?.orderId) === normalizedOrderId
+        ? state.current.payload
+        : null;
+      void markChatReadSnapshot(
+        normalizedOrderId,
+        access.chatToken,
+        access.initialPayload || currentReadPayload,
+      );
       if (!state.current || normalizeOrderId(state.current.order?.orderId) !== normalizedOrderId) return;
       state.current.access = access;
       scheduleChatPushPrompt({ ...access, orderId: order.orderId });
@@ -1469,6 +1507,7 @@ async function resumeOutboxForCurrentChat() {
     state.sellerRevealTimer = 0;
     }
     clearPendingFile();
+    if (elements.maxWarning) elements.maxWarning.hidden = true;
     state.current = null;
     state.objectUrls.forEach((url) => URL.revokeObjectURL(url));
     state.objectUrls.clear();
@@ -1499,6 +1538,15 @@ async function resumeOutboxForCurrentChat() {
 
   function renderChatPayload(payload, scrollToEnd = false) {
     if (!payload?.order || !Array.isArray(payload.messages)) return;
+    const hasCustomerMessage = payload.messages.some((message) => message.sender === "client");
+    const showMaxWarning = Boolean(
+      !payload.localPending &&
+      (state.current?.order?.contactChannel === "max" || payload.summary?.contactChannel === "max") &&
+      payload.summary?.isActive !== true &&
+      !hasCustomerMessage &&
+      !state.current?.maxWarningDismissed
+    );
+    if (elements.maxWarning) elements.maxWarning.hidden = !showMaxWarning;
     const orderId = normalizeOrderId(payload.order.orderId || state.current?.order?.orderId);
     const wasNearBottom = elements.chatMessages.scrollHeight - elements.chatMessages.scrollTop
       - elements.chatMessages.clientHeight < 90;
@@ -2011,41 +2059,25 @@ return card;
   );
 }
 
-  async function markCurrentChatRead() {
-    if (!state.current?.access?.chatToken) return;
-    const current = state.current;
-    const unread = Number(current.payload?.summary?.unread
-      ?? state.summaries.get(normalizeOrderId(current.order.orderId))?.unread
-      ?? 0);
-    if (unread <= 0) return;
-    if (current.readPromise) return current.readPromise;
-    const orderId = normalizeOrderId(current.order.orderId);
-    const request = (async () => {
-    try {
-      await apiPost({
-        action: "chat_read",
-        orderId: current.order.orderId,
-        chatToken: current.access.chatToken,
-      });
-      if (current.payload?.summary) {
-        current.payload = {
-          ...current.payload,
-          summary: { ...current.payload.summary, unread: 0 },
-        };
-        await cacheChat(orderId, current.payload);
-      }
-      const summary = state.summaries.get(orderId);
-      if (summary) state.summaries.set(orderId, { ...summary, unread: 0 });
-      updateAppBadge();
-      renderSavedOrdersSummary();
-    } catch (error) {
+  async function markChatReadSnapshot(orderIdValue, chatToken, payload = null) {
+    const orderId = normalizeOrderId(orderIdValue);
+    if (!orderId || !chatToken) return;
+    clearUnreadLocally(orderId, payload);
+    const existingState = state.readStates.get(orderId) || {};
+    if (existingState.promise) return existingState.promise;
+    const request = apiPost({
+      action: "chat_read",
+      orderId,
+      chatToken,
+      viewer: "customer",
+    }).catch((error) => {
       console.warn("Не удалось отметить чат прочитанным", error);
-    }
-    })();
-    current.readPromise = request;
-    try { await request; } finally {
-      if (current.readPromise === request) current.readPromise = null;
-    }
+    }).finally(() => {
+      const latest = state.readStates.get(orderId);
+      if (latest?.promise === request) state.readStates.set(orderId, { ...latest, promise: null });
+    });
+    state.readStates.set(orderId, { ...existingState, promise: request });
+    return request;
   }
 
   function startChatPolling(elapsedMs = 0) {
@@ -2235,6 +2267,7 @@ return card;
     createdAt,
     delivery: "sending",
     localRequestId: request.requestId,
+    clientMessageId: request.clientMessageId || request.requestId,
     retryRequest: request,
   };
 }
@@ -2263,6 +2296,7 @@ function queuedDelivery(request) {
     return;
   }
 
+  const clientMessageId = randomRequestId("message");
   const request = {
     action: "chat_send",
     orderId:
@@ -2271,8 +2305,8 @@ function queuedDelivery(request) {
     chatToken:
       state.current.access.chatToken,
 
-    requestId:
-      randomRequestId("message"),
+    requestId: clientMessageId,
+    clientMessageId,
 
     text,
     attachment: state.pendingFile,
@@ -2688,6 +2722,7 @@ function queuedDelivery(request) {
         items: order.items,
         clientRequestId: `restored:${requestId}`,
         seasonId: result.seasonId,
+        contactChannel: result.summary?.contactChannel || "",
       });
       if (result.chatCreated && result.chatToken) {
         await putAccess(order.orderId, { chatToken: result.chatToken, chatCreated: true });
@@ -2711,6 +2746,12 @@ function queuedDelivery(request) {
   elements.chooseChat?.addEventListener("click", () => void chooseInternalChat());
   elements.chooseMax?.addEventListener("click", () => void chooseMax());
   elements.closeChat?.addEventListener("click", closeOrderChat);
+  elements.maxBack?.addEventListener("click", closeOrderChat);
+  elements.maxContinue?.addEventListener("click", () => {
+    if (state.current) state.current.maxWarningDismissed = true;
+    if (elements.maxWarning) elements.maxWarning.hidden = true;
+    elements.chatInput?.focus();
+  });
   elements.chatComposer?.addEventListener("submit", sendComposerMessage);
   const activateChatFromTouch = () => activateChatPolling(
     Date.now() - state.chatActivityAt >= CHAT_POLL_FAST_WINDOW,
