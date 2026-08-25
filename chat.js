@@ -45,6 +45,9 @@ const CHAT_PAYMENT = {
     authoritativeOrders: new Map(),
     statusRefreshTimer: 0,
     statusRefreshPromise: null,
+    statusRefreshQueued: false,
+    summaryRefreshSequence: 0,
+    firestoreStatusSignals: new Map(),
     access: new Map(),
     chatCache: new Map(),
     current: null,
@@ -105,6 +108,12 @@ const CHAT_PAYMENT = {
     const random = window.crypto?.randomUUID?.()
       || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
     return `${prefix}:${random}`;
+  }
+
+  function randomMessageId() {
+    const random = window.crypto?.randomUUID?.()
+      || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+    return `msg_${random}`;
   }
 
   function normalizeOrderId(value) {
@@ -724,16 +733,29 @@ const dbDelete = (store, key) =>
       ...(firestoreSummary || {}),
     };
 
-    if (orderStatusSignature(authoritative) === orderStatusSignature(firestoreState)) {
+    const firestoreSignature = orderStatusSignature(firestoreState);
+    if (orderStatusSignature(authoritative) === firestoreSignature) {
+      state.firestoreStatusSignals.delete(orderId);
       return;
     }
+
+    if (state.firestoreStatusSignals.get(orderId) === firestoreSignature) return;
+    state.firestoreStatusSignals.set(orderId, firestoreSignature);
+
+    // Любой уже выполняющийся chat_summaries был запущен до этого сигнала и
+    // больше не имеет права перезаписать новое состояние старым ответом.
+    state.summaryRefreshSequence += 1;
+    state.statusRefreshQueued = true;
 
     // Firestore сказал, что состояние отличается. Само значение ему не доверяем:
     // один раз перечитываем source of truth через Apps Script.
     if (state.statusRefreshTimer || state.statusRefreshPromise) return;
 
-    state.statusRefreshTimer = window.setTimeout(() => {
+    const scheduleRefresh = () => {
+      if (state.statusRefreshTimer || state.statusRefreshPromise || !state.statusRefreshQueued) return;
+      state.statusRefreshTimer = window.setTimeout(() => {
       state.statusRefreshTimer = 0;
+      state.statusRefreshQueued = false;
       const request = refreshChatSummaries()
         .catch((error) => {
           console.warn("Не удалось сверить статус заказа с таблицей", error);
@@ -742,9 +764,12 @@ const dbDelete = (store, key) =>
           if (state.statusRefreshPromise === request) {
             state.statusRefreshPromise = null;
           }
+          scheduleRefresh();
         });
       state.statusRefreshPromise = request;
-    }, 250);
+      }, 250);
+    };
+    scheduleRefresh();
   }
 
   function clearUnreadLocally(orderId, payload = null) {
@@ -1041,11 +1066,13 @@ async function removeOutboxRequest(
     savedOrders = [];
     state.summaries.clear();
     state.authoritativeOrders.clear();
+    state.firestoreStatusSignals.clear();
     if (state.statusRefreshTimer) {
       clearTimeout(state.statusRefreshTimer);
       state.statusRefreshTimer = 0;
     }
     state.statusRefreshPromise = null;
+    state.statusRefreshQueued = false;
     state.access.clear();
     state.chatCache.clear();
     try { await clearChatDatabase(); } catch (error) { console.warn("Не удалось очистить локальный чат", error); }
@@ -1096,6 +1123,7 @@ async function removeOutboxRequest(
   }
 
   async function refreshChatSummaries() {
+    const refreshSequence = ++state.summaryRefreshSequence;
     const previousSummaries = new Map(state.summaries);
     const pendingReads = Array.from(state.readStates.values())
       .map((item) => item?.promise)
@@ -1118,6 +1146,7 @@ async function removeOutboxRequest(
 
     try {
       const result = await apiPost({ action: "chat_summaries", orders: entries }, 30000);
+      if (refreshSequence !== state.summaryRefreshSequence) return;
       result.summaries.forEach((item) => {
         const key = normalizeOrderId(item.order?.orderId || item.summary?.orderId);
         if (!key) return;
@@ -1174,6 +1203,7 @@ async function removeOutboxRequest(
       }));
       changedOrderIds.forEach(preloadOrderChat);
     } catch (error) {
+      if (refreshSequence !== state.summaryRefreshSequence) return;
       if (error?.code !== "REQUEST_TIMEOUT") {
         console.warn("Не удалось обновить сводки чата", error);
       }
@@ -2663,7 +2693,7 @@ function queuedDelivery(request) {
     return;
   }
 
-  const clientMessageId = randomRequestId("message");
+  const clientMessageId = randomMessageId();
   const request = {
     action: "chat_send",
     orderId:

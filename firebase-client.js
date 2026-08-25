@@ -248,9 +248,10 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
   const emit = () => {
     if (!orderData || typeof onData !== "function") return;
     const order = orderData.order || {};
-    const incomingSender = viewer === "seller" ? "client" : "seller";
     const unread = messages.filter((message) => (
-      message.sender === incomingSender
+      (viewer === "seller"
+        ? message.sender === "client"
+        : message.sender === "seller" || message.sender === "system")
       && (Date.parse(message.createdAt || "") || 0) > readAt
     )).length;
     const last = messages.length ? messages[messages.length - 1] : null;
@@ -379,13 +380,13 @@ export async function sendRealtimeText({ apiUrl, seasonId, orderId, chatToken, s
   }
 
   const firebaseIdToken = await user.getIdToken();
-  void postJson(apiUrl, {
+  await postJson(apiUrl, {
     action: sender === "seller" ? "chat_firestore_seller_notify" : "chat_firestore_notify",
     orderId,
     chatToken,
     messageId: safeMessageId,
     firebaseIdToken,
-  }, 30000).catch((error) => console.warn("Firebase message mirror delayed", error));
+  }, 30000);
 
   return {
     success: true,
