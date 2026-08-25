@@ -176,7 +176,11 @@ const CHAT_PAYMENT = {
       viewer: "client",
       onData: (incoming) => {
         const normalized = normalizeOrderId(order.orderId);
-        const memory = state.chatCache.get(key)?.payload;
+        const currentMemory =
+          state.current && normalizeOrderId(state.current.order?.orderId) === normalized
+            ? state.current.payload
+            : null;
+        const memory = currentMemory || state.chatCache.get(key)?.payload;
         let payload = mergeChatPayload(memory, incoming);
         payload.summary = suppressReadSummary(normalized, payload.summary);
 
@@ -599,6 +603,7 @@ const dbDelete = (store, key) =>
       message?.text || "",
       message?.createdAt || "",
       message?.delivery || "",
+      Boolean(message?.awaitingServerEcho),
       message?.localRequestId || "",
       attachment.attachmentId || "",
       attachment.mime || "",
@@ -838,7 +843,16 @@ async function removeOutboxRequest(
     if (payload?.localPending) return "";
     const messages = Array.isArray(payload?.messages) ? payload.messages : [];
     for (let index = messages.length - 1; index >= 0; index--) {
-      if (messages[index]?.messageId && !messages[index]?.delivery) return messages[index].messageId;
+      const message = messages[index];
+      // ACK от sendText/chat_send ещё не означает, что chat_history/onSnapshot
+      // уже успели вернуть это сообщение. Не используем такой локальный ACK
+      // как серверный cursor, иначе можно запросить историю «после» записи,
+      // которой в отстающем источнике пока ещё нет.
+      if (
+        message?.messageId
+        && !message?.delivery
+        && !message?.awaitingServerEcho
+      ) return message.messageId;
     }
     return "";
   }
@@ -872,6 +886,12 @@ async function removeOutboxRequest(
         !String(message.messageId).startsWith("pending_") &&
         !message.delivery
       );
+      // Если предыдущая версия была локальным ACK, а теперь тот же stable ID
+      // пришёл из history/realtime без awaitingServerEcho — серверное эхо получено.
+      const serverEchoArrived = Boolean(
+        previous?.awaitingServerEcho &&
+        !message?.awaitingServerEcho
+      );
       return {
         ...previous,
         ...message,
@@ -879,6 +899,9 @@ async function removeOutboxRequest(
         localRequestId: message.clientMessageId || previous?.localRequestId,
         delivery: confirmed ? undefined : (message.delivery ?? previous?.delivery),
         retryRequest: confirmed ? undefined : (message.retryRequest ?? previous?.retryRequest),
+        awaitingServerEcho: serverEchoArrived
+          ? undefined
+          : (message.awaitingServerEcho ?? previous?.awaitingServerEcho),
         attachment: message.attachment
           ? { ...previous?.attachment, ...message.attachment, ...(localBase64 ? { localBase64 } : {}) }
           : message.attachment,
@@ -895,7 +918,12 @@ async function removeOutboxRequest(
     };
 
     if (incoming?.messagesMode !== "delta") {
-      cachedMessages.filter((message) => message.delivery).forEach(put);
+      // Полная серверная история может на несколько секунд/десятков секунд
+      // отставать от только что подтверждённой записи. Пока не увидели серверное
+      // эхо, держим локальный ACK рядом с обычными pending/error сообщениями.
+      cachedMessages
+        .filter((message) => message.delivery || message.awaitingServerEcho)
+        .forEach(put);
       incomingMessages.forEach(put);
     } else {
       cachedMessages.forEach(put);
@@ -963,7 +991,18 @@ async function removeOutboxRequest(
       || normalizeOrderId(state.current.order?.orderId) !== normalizeOrderId(orderId)
       || elements.chatModal.hidden
     ) return false;
-    const previousSignature = (state.current.payload?.messages || []).map(chatMessageSignature).join("\n");
+
+    const normalized = normalizeOrderId(orderId);
+    const currentPayload = state.current.payload;
+
+    // За время сетевого refresh пользователь мог уже отправить сообщение.
+    // Поэтому старый ответ никогда не ставим в state.current напрямую:
+    // сначала повторно сливаем его с самым свежим локальным состоянием.
+    payload = mergeChatPayload(currentPayload, payload);
+    payload.summary = suppressReadSummary(normalized, payload.summary);
+    payload = applyLatestKnownOrderStatus(payload, normalized);
+
+    const previousSignature = (currentPayload?.messages || []).map(chatMessageSignature).join("\n");
     const nextSignature = (payload.messages || []).map(chatMessageSignature).join("\n");
     state.current.payload = payload;
     renderChatPayload(payload, scrollToEnd);
@@ -2768,7 +2807,16 @@ function queuedDelivery(request) {
     // закончить очистку outbox после перезапуска PWA.
     confirmedMessage = {
       ...confirmedMessage,
+      // Гарантируем общий stable ID даже для старого Apps Script ответа.
+      clientMessageId:
+        confirmedMessage?.clientMessageId ||
+        request.clientMessageId ||
+        request.requestId,
       localRequestId: request.requestId,
+      // Ответ sendText/chat_send подтверждает приём, но realtime/history может
+      // ещё вернуть предыдущий снимок. Держим сообщение локально до первого
+      // серверного эха, не показывая пользователю отдельный статус.
+      awaitingServerEcho: true,
     };
 
     const currentIsSameChat =
