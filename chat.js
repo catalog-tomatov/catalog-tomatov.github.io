@@ -52,6 +52,8 @@ const CHAT_PAYMENT = {
     objectUrls: new Set(),
     createPromises: new Map(),
     readStates: new Map(),
+    realtimeSubscriptions: new Map(),
+    realtimeReady: new Set(),
     initialized: false,
   };
 
@@ -108,6 +110,72 @@ const CHAT_PAYMENT = {
 
   function orderKey(orderId, seasonId = state.config?.seasonId || "") {
     return `${seasonId}|${normalizeOrderId(orderId)}`;
+  }
+
+  function realtimeBridge() {
+    return window.tomatoRealtime || null;
+  }
+
+  function stopRealtimeSubscriptions() {
+    state.realtimeSubscriptions.forEach((unsubscribe) => {
+      try { unsubscribe(); } catch (error) { /* best effort */ }
+    });
+    state.realtimeSubscriptions.clear();
+    state.realtimeReady.clear();
+  }
+
+  async function ensureRealtimeOrder(order, access) {
+    const bridge = realtimeBridge();
+    if (!bridge || !state.config?.seasonId || !access?.chatToken) return false;
+    const key = orderKey(order.orderId);
+    if (state.realtimeSubscriptions.has(key)) return true;
+    await bridge.linkOrder({
+      apiUrl: chatApiUrl(),
+      orderId: order.orderId,
+      chatToken: access.chatToken,
+    });
+    let unsubscribe = () => undefined;
+    unsubscribe = await bridge.subscribeOrder({
+      seasonId: state.config.seasonId,
+      orderId: order.orderId,
+      viewer: "client",
+      onData: (incoming) => {
+        const normalized = normalizeOrderId(order.orderId);
+        const memory = state.chatCache.get(key)?.payload;
+        const payload = mergeChatPayload(memory, incoming);
+        payload.summary = suppressReadSummary(normalized, payload.summary);
+        state.realtimeReady.add(key);
+        state.summaries.set(normalized, payload.summary);
+        void cacheChat(normalized, payload);
+        renderSavedOrdersSummary();
+        updateAppBadge();
+        if (
+          state.current
+          && normalizeOrderId(state.current.order?.orderId) === normalized
+          && !elements.chatModal.hidden
+        ) {
+          state.current.payload = payload;
+          stopChatPolling();
+          renderChatPayload(payload, false);
+          if (Number(payload.summary?.unread || 0) > 0) {
+            void markChatReadSnapshot(normalized, access.chatToken, payload);
+          }
+          setChatError("");
+        }
+      },
+      onError: (error) => {
+        console.warn("Realtime-обновление чата отложено", error);
+        state.realtimeReady.delete(key);
+        const currentUnsubscribe = state.realtimeSubscriptions.get(key);
+        if (currentUnsubscribe === unsubscribe) state.realtimeSubscriptions.delete(key);
+        try { unsubscribe(); } catch (unsubscribeError) { /* best effort */ }
+        if (state.current && normalizeOrderId(state.current.order?.orderId) === normalizeOrderId(order.orderId)) {
+          startChatPolling();
+        }
+      },
+    });
+    state.realtimeSubscriptions.set(key, unsubscribe);
+    return true;
   }
 
   function findSavedOrder(orderId) {
@@ -731,6 +799,7 @@ async function removeOutboxRequest(
   }
 
   async function clearClosedClientData() {
+    stopRealtimeSubscriptions();
     [
       SAVED_ORDERS_KEY,
       "tomatoCart",
@@ -767,6 +836,7 @@ async function removeOutboxRequest(
     const localSeasonId = localStorage.getItem(CHAT_SEASON_KEY);
     const changedSeason = Boolean(localSeasonId && localSeasonId !== state.config.seasonId);
     if (changedSeason || seasonCloseDatePassed(state.config)) {
+      stopRealtimeSubscriptions();
       await clearClosedClientData();
     }
     localStorage.setItem(CHAT_SEASON_KEY, state.config.seasonId);
@@ -847,6 +917,13 @@ async function removeOutboxRequest(
           messages: Array.isArray(cached?.messages) ? cached.messages : [],
         });
         if (summaryChanged(previous, item.summary)) changedOrderIds.push(itemOrderId);
+        const access = await getAccess(itemOrderId).catch(() => null);
+        const savedOrder = findSavedOrder(itemOrderId);
+        if (access?.chatToken && savedOrder) {
+          void ensureRealtimeOrder(savedOrder, access).catch((error) => {
+            console.warn("Realtime-подписка заказа отложена", error);
+          });
+        }
       }));
       changedOrderIds.forEach(preloadOrderChat);
     } catch (error) {
@@ -1487,8 +1564,11 @@ async function resumeOutboxForCurrentChat() {
       await resumeOutboxForCurrentChat();
       const payload = await refreshChatCache(order.orderId, access);
       await showRefreshedChatIfOpen(order.orderId, payload, !cached?.messages?.length);
+      await ensureRealtimeOrder(order, access).catch((realtimeError) => {
+        console.warn("Firestore недоступен, оставлен резервный канал", realtimeError);
+      });
       setChatError("");
-      startChatPolling();
+      if (!state.realtimeReady.has(orderKey(order.orderId))) startChatPolling();
     } catch (error) {
       if (state.current.payload?.messages?.length) {
         setChatError("Нет связи с сервером. Показана последняя сохранённая история.");
@@ -2065,7 +2145,15 @@ return card;
     clearUnreadLocally(orderId, payload);
     const existingState = state.readStates.get(orderId) || {};
     if (existingState.promise) return existingState.promise;
-    const request = apiPost({
+    const bridge = realtimeBridge();
+    const realtimeRequest = state.realtimeReady.has(orderKey(orderId)) && bridge
+      ? bridge.markRead({
+          seasonId: state.config?.seasonId || "",
+          orderId,
+          viewer: "client",
+        })
+      : Promise.resolve();
+    const request = realtimeRequest.then(() => apiPost({
       action: "chat_read",
       orderId,
       chatToken,
@@ -2075,13 +2163,14 @@ return card;
     }).finally(() => {
       const latest = state.readStates.get(orderId);
       if (latest?.promise === request) state.readStates.set(orderId, { ...latest, promise: null });
-    });
+    }));
     state.readStates.set(orderId, { ...existingState, promise: request });
     return request;
   }
 
   function startChatPolling(elapsedMs = 0) {
     stopChatPolling();
+    if (state.current && state.realtimeReady.has(orderKey(state.current.order?.orderId))) return;
     if (!state.current || document.hidden || elements.chatModal.hidden) return;
     const recentlyActive = Date.now() - state.chatActivityAt < CHAT_POLL_FAST_WINDOW;
     const interval = recentlyActive ? CHAT_POLL_FAST_INTERVAL : CHAT_POLL_IDLE_INTERVAL;
@@ -2395,10 +2484,21 @@ function queuedDelivery(request) {
   }
 
   try {
-    const result = await apiPost(
-      request,
-      30000
-    );
+    const bridge = realtimeBridge();
+    const useRealtime = !request.attachment
+      && bridge
+      && state.realtimeReady.has(orderKey(orderId));
+    const result = useRealtime
+      ? await bridge.sendText({
+          apiUrl: chatApiUrl(),
+          seasonId: state.config?.seasonId || "",
+          orderId: request.orderId,
+          chatToken: request.chatToken,
+          sender: "client",
+          text: request.text,
+          messageId: request.requestId,
+        })
+      : await apiPost(request, 30000);
 
     let confirmedMessage =
       result.message;
