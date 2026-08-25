@@ -11,6 +11,7 @@ let firebaseApp = null;
 let firebaseAuth = null;
 let firestoreDb = null;
 let firebaseUser = null;
+const linkedMemberships = new Set();
 
 function normalizeFirestorePart(value) {
   const result = String(value || "").trim().replace(/^#/, "");
@@ -22,6 +23,14 @@ function normalizeFirestorePart(value) {
 
 function orderDocumentPath(seasonId, orderId) {
   return `seasons/${normalizeFirestorePart(seasonId)}/orders/${normalizeFirestorePart(orderId)}`;
+}
+
+function isFirestorePermissionError(error) {
+  const code = String(error?.code || "").toLowerCase();
+  const message = String(error?.message || "").toLowerCase();
+  return code.includes("permission-denied")
+    || code.includes("permission_denied")
+    || message.includes("insufficient permissions");
 }
 
 function isFirebaseDebugMode() {
@@ -139,7 +148,9 @@ async function postJson(url, payload, timeoutMs = 20000) {
     const response = await fetch(url, {
       method: "POST",
       cache: "no-store",
-      headers: { "Content-Type": "application/json" },
+      // Apps Script Web App: не ставим application/json, иначе браузер
+      // делает CORS preflight (OPTIONS), который Web App не обслуживает.
+      // JSON всё равно передаётся строкой и читается через e.postData.contents.
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
@@ -155,15 +166,40 @@ async function postJson(url, payload, timeoutMs = 20000) {
   }
 }
 
+function membershipKey(seasonId, orderId, uid) {
+  return `${normalizeFirestorePart(seasonId)}|${normalizeFirestorePart(orderId)}|${uid}`;
+}
+
 export async function linkRealtimeOrder({ apiUrl, orderId, chatToken }) {
-  const { user } = await getFirebaseContext();
+  const { db, user, firestoreSdk } = await getFirebaseContext();
   const firebaseIdToken = await user.getIdToken();
-  return postJson(apiUrl, {
+  const result = await postJson(apiUrl, {
     action: "chat_firestore_link",
     orderId,
     chatToken,
     firebaseIdToken,
   }, 30000);
+
+  const linkedSeasonId = String(result?.seasonId || "");
+  if (!linkedSeasonId) {
+    throw new Error("Firebase не вернул сезон заказа.");
+  }
+
+  // Не считаем link успешным только по ответу Apps Script: проверяем
+  // membership тем же Firebase Auth UID, которым затем пишет браузер.
+  const memberRef = firestoreSdk.doc(
+    db,
+    `${orderDocumentPath(linkedSeasonId, orderId)}/members/${user.uid}`,
+  );
+  const memberSnapshot = await firestoreSdk.getDoc(memberRef);
+  if (!memberSnapshot.exists()) {
+    const error = new Error("Firebase-доступ к заказу не создан.");
+    error.code = "FIREBASE_MEMBER_NOT_CREATED";
+    throw error;
+  }
+
+  linkedMemberships.add(membershipKey(linkedSeasonId, orderId, user.uid));
+  return { ...result, seasonId: linkedSeasonId, uid: user.uid, memberCreated: true };
 }
 
 function firestoreDate(value, fallback = "") {
@@ -267,12 +303,26 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
 
 export async function sendRealtimeText({ apiUrl, seasonId, orderId, chatToken, sender, text, messageId }) {
   const { db, user, firestoreSdk } = await getFirebaseContext();
-  const safeMessageId = normalizeFirestorePart(messageId);
+  const safeClientMessageId = normalizeFirestorePart(messageId);
+  const safeMessageId = normalizeFirestorePart(
+    safeClientMessageId.startsWith("msg_")
+      ? safeClientMessageId
+      : `msg_${safeClientMessageId}`,
+  );
   const safeOrderId = normalizeFirestorePart(orderId);
   const createdAtIso = new Date().toISOString();
+
+  let activeSeasonId = String(seasonId || "");
+  let membership = membershipKey(activeSeasonId, orderId, user.uid);
+  if (!linkedMemberships.has(membership)) {
+    const linkResult = await linkRealtimeOrder({ apiUrl, orderId, chatToken });
+    activeSeasonId = String(linkResult?.seasonId || activeSeasonId);
+    membership = membershipKey(activeSeasonId, orderId, user.uid);
+  }
+
   const message = {
     messageId: safeMessageId,
-    seasonId: normalizeFirestorePart(seasonId),
+    seasonId: normalizeFirestorePart(activeSeasonId),
     orderId: safeOrderId,
     sender,
     type: "text",
@@ -280,17 +330,54 @@ export async function sendRealtimeText({ apiUrl, seasonId, orderId, chatToken, s
     attachmentId: "",
     attachment: null,
     snapshot: null,
-    clientMessageId: safeMessageId,
+    clientMessageId: safeClientMessageId,
     createdAt: firestoreSdk.serverTimestamp(),
     createdAtIso,
     authorUid: user.uid,
     source: "firestore",
   };
-  if (!message.text || message.text.length > 2000) throw new Error("Некорректный текст сообщения.");
-  await firestoreSdk.setDoc(
-    firestoreSdk.doc(db, `${orderDocumentPath(seasonId, orderId)}/messages/${safeMessageId}`),
-    message,
+  if (!message.text || message.text.length > 2000) {
+    throw new Error("Некорректный текст сообщения.");
+  }
+
+  const makeMessageRef = (season) => firestoreSdk.doc(
+    db,
+    `${orderDocumentPath(season, orderId)}/messages/${safeMessageId}`,
   );
+
+  let messageRef = makeMessageRef(activeSeasonId);
+  try {
+    await firestoreSdk.setDoc(messageRef, message);
+  } catch (error) {
+    if (!isFirestorePermissionError(error)) throw error;
+
+    // UID мог смениться или membership мог быть удалён. Один раз
+    // перепривязываем заказ и повторяем запись.
+    linkedMemberships.delete(membership);
+    const linkResult = await linkRealtimeOrder({ apiUrl, orderId, chatToken });
+    activeSeasonId = String(linkResult?.seasonId || activeSeasonId);
+    message.seasonId = normalizeFirestorePart(activeSeasonId);
+    messageRef = makeMessageRef(activeSeasonId);
+
+    try {
+      await firestoreSdk.setDoc(messageRef, message);
+    } catch (retryError) {
+      if (!isFirestorePermissionError(retryError)) throw retryError;
+
+      // setDoc существующего документа считается update, а Rules запрещают
+      // update. Для повторной доставки того же outbox-id это уже успех.
+      const existing = await firestoreSdk.getDoc(messageRef);
+      const existingData = existing.exists() ? existing.data() : null;
+      if (
+        !existingData
+        || String(existingData.authorUid || "") !== user.uid
+        || String(existingData.messageId || "") !== safeMessageId
+      ) {
+        throw retryError;
+      }
+    }
+  }
+
   const firebaseIdToken = await user.getIdToken();
   void postJson(apiUrl, {
     action: sender === "seller" ? "chat_firestore_seller_notify" : "chat_firestore_notify",
@@ -299,6 +386,7 @@ export async function sendRealtimeText({ apiUrl, seasonId, orderId, chatToken, s
     messageId: safeMessageId,
     firebaseIdToken,
   }, 30000).catch((error) => console.warn("Firebase message mirror delayed", error));
+
   return {
     success: true,
     message: {

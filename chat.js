@@ -54,6 +54,7 @@ const CHAT_PAYMENT = {
     readStates: new Map(),
     realtimeSubscriptions: new Map(),
     realtimeReady: new Set(),
+    realtimeRelinking: new Set(),
     initialized: false,
   };
 
@@ -124,19 +125,48 @@ const CHAT_PAYMENT = {
     state.realtimeReady.clear();
   }
 
-  async function ensureRealtimeOrder(order, access) {
+  function isRealtimePermissionError(error) {
+    const code = String(error?.code || "").toLowerCase();
+    const message = String(error?.message || "").toLowerCase();
+    return code.includes("permission-denied")
+      || code.includes("permission_denied")
+      || message.includes("permission")
+      || message.includes("insufficient permissions");
+  }
+
+  async function ensureRealtimeOrder(order, access, forceLink = false) {
     const bridge = realtimeBridge();
     if (!bridge || !state.config?.seasonId || !access?.chatToken) return false;
+
     const key = orderKey(order.orderId);
     if (state.realtimeSubscriptions.has(key)) return true;
-    await bridge.linkOrder({
+
+    // ВАЖНО: не доверяем сохранённому firebaseUid как доказательству membership.
+    // Firestore membership мог отсутствовать, поэтому перед новой подпиской
+    // делаем короткий idempotent link и используем seasonId, который вернул сервер.
+    const linkResult = await bridge.linkOrder({
       apiUrl: chatApiUrl(),
       orderId: order.orderId,
       chatToken: access.chatToken,
     });
+
+    const context = await bridge.ready();
+    const firebaseUid = String(linkResult?.uid || context?.user?.uid || "");
+    const linkedSeasonId = String(linkResult?.seasonId || state.config.seasonId || "");
+
+    if (firebaseUid) {
+      access = await putAccess(order.orderId, { firebaseUid });
+      if (
+        state.current
+        && normalizeOrderId(state.current.order?.orderId) === normalizeOrderId(order.orderId)
+      ) {
+        state.current.access = access;
+      }
+    }
+
     let unsubscribe = () => undefined;
     unsubscribe = await bridge.subscribeOrder({
-      seasonId: state.config.seasonId,
+      seasonId: linkedSeasonId,
       orderId: order.orderId,
       viewer: "client",
       onData: (incoming) => {
@@ -169,6 +199,26 @@ const CHAT_PAYMENT = {
         const currentUnsubscribe = state.realtimeSubscriptions.get(key);
         if (currentUnsubscribe === unsubscribe) state.realtimeSubscriptions.delete(key);
         try { unsubscribe(); } catch (unsubscribeError) { /* best effort */ }
+
+        // Если локально считали UID уже привязанным, а Firestore говорит
+        // permission-denied, один раз перепривязываем заказ через Apps Script.
+        if (isRealtimePermissionError(error) && !state.realtimeRelinking.has(key)) {
+          state.realtimeRelinking.add(key);
+          void putAccess(order.orderId, { firebaseUid: "" })
+            .then((nextAccess) => ensureRealtimeOrder(order, nextAccess, true))
+            .catch((relinkError) => {
+              console.warn("Не удалось восстановить realtime-доступ", relinkError);
+              if (
+                state.current
+                && normalizeOrderId(state.current.order?.orderId) === normalizeOrderId(order.orderId)
+              ) {
+                startChatPolling();
+              }
+            })
+            .finally(() => state.realtimeRelinking.delete(key));
+          return;
+        }
+
         if (state.current && normalizeOrderId(state.current.order?.orderId) === normalizeOrderId(order.orderId)) {
           startChatPolling();
         }
@@ -1561,12 +1611,17 @@ async function resumeOutboxForCurrentChat() {
       if (!state.current || normalizeOrderId(state.current.order?.orderId) !== normalizedOrderId) return;
       state.current.access = access;
       scheduleChatPushPrompt({ ...access, orderId: order.orderId });
-      await resumeOutboxForCurrentChat();
       const payload = await refreshChatCache(order.orderId, access);
       await showRefreshedChatIfOpen(order.orderId, payload, !cached?.messages?.length);
+
+      // Сначала создаём/проверяем Firebase membership и подписку, и только
+      // потом повторяем старый outbox. Так старые сообщения не стреляют в
+      // Firestore до появления доступа.
       await ensureRealtimeOrder(order, access).catch((realtimeError) => {
         console.warn("Firestore недоступен, оставлен резервный канал", realtimeError);
       });
+      await resumeOutboxForCurrentChat();
+
       setChatError("");
       if (!state.realtimeReady.has(orderKey(order.orderId))) startChatPolling();
     } catch (error) {
@@ -2485,9 +2540,9 @@ function queuedDelivery(request) {
 
   try {
     const bridge = realtimeBridge();
-    const useRealtime = !request.attachment
-      && bridge
-      && state.realtimeReady.has(orderKey(orderId));
+    // Текст идёт напрямую в Firestore независимо от того, успел ли
+    // onSnapshot уже прислать первый snapshot. Вложения остаются на Apps Script/Drive.
+    const useRealtime = !request.attachment && bridge;
     const result = useRealtime
       ? await bridge.sendText({
           apiUrl: chatApiUrl(),
