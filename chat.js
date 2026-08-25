@@ -40,6 +40,11 @@ const CHAT_PAYMENT = {
   const state = {
     config: null,
     summaries: new Map(),
+    // Статус/суммы заказа, подтверждённые Apps Script (Google Sheets).
+    // Firestore может сигнализировать об изменении, но не перезаписывает эту истину.
+    authoritativeOrders: new Map(),
+    statusRefreshTimer: 0,
+    statusRefreshPromise: null,
     access: new Map(),
     chatCache: new Map(),
     current: null,
@@ -172,12 +177,26 @@ const CHAT_PAYMENT = {
       onData: (incoming) => {
         const normalized = normalizeOrderId(order.orderId);
         const memory = state.chatCache.get(key)?.payload;
-        const payload = mergeChatPayload(memory, incoming);
+        let payload = mergeChatPayload(memory, incoming);
         payload.summary = suppressReadSummary(normalized, payload.summary);
+
+        // Firestore может содержать старую копию оплаты. Используем расхождение
+        // только как сигнал перечитать Google Sheets через Apps Script.
+        requestAuthoritativeStatusRefresh(
+          normalized,
+          incoming?.order,
+          incoming?.summary,
+        );
+
+        // Перед любым render возвращаем статус/суммы из source of truth.
+        payload = applyLatestKnownOrderStatus(payload, normalized);
         state.realtimeReady.add(key);
         state.summaries.set(normalized, payload.summary);
         void cacheChat(normalized, payload);
         renderSavedOrdersSummary();
+        if (document.getElementById("savedOrdersModal")?.style.display === "flex") {
+          renderSavedOrdersList();
+        }
         updateAppBadge();
         if (
           state.current
@@ -594,7 +613,12 @@ const dbDelete = (store, key) =>
     if (!previous || !next) return false;
     return String(previous.lastAt || "") !== String(next.lastAt || "")
       || String(previous.lastMessage || "") !== String(next.lastMessage || "")
-      || Number(next.unread || 0) > Number(previous.unread || 0);
+      || Number(next.unread || 0) > Number(previous.unread || 0)
+      || String(previous.status || "") !== String(next.status || "")
+      || String(previous.statusLabel || "") !== String(next.statusLabel || "")
+      || Number(previous.prepayment || 0) !== Number(next.prepayment || 0)
+      || Number(previous.debt || 0) !== Number(next.debt || 0)
+      || Number(previous.total || 0) !== Number(next.total || 0);
   }
 
   function suppressReadSummary(orderId, summary) {
@@ -604,6 +628,118 @@ const dbDelete = (store, key) =>
     const floor = Date.parse(readState.lastAt || "") || 0;
     const incoming = Date.parse(summary.lastAt || "") || 0;
     return incoming <= floor ? { ...summary, unread: 0 } : summary;
+  }
+
+  // Статус заказа в Каталоге берём только из Apps Script / Google Sheets.
+  // Firestore остаётся realtime-транспортом сообщений и сигналом "заказ изменился".
+  const AUTHORITATIVE_ORDER_FIELDS = [
+    "status",
+    "statusLabel",
+    "prepayment",
+    "debt",
+    "total",
+    "issued",
+  ];
+
+  function rememberAuthoritativeOrderState(orderIdValue, order = null, summary = null) {
+    const orderId = normalizeOrderId(
+      orderIdValue || order?.orderId || summary?.orderId,
+    );
+    if (!orderId) return null;
+
+    const previous = state.authoritativeOrders.get(orderId) || {};
+    const next = { ...previous };
+    const sources = [summary || {}, order || {}];
+
+    AUTHORITATIVE_ORDER_FIELDS.forEach((field) => {
+      for (const source of sources) {
+        if (
+          Object.prototype.hasOwnProperty.call(source, field)
+          && source[field] !== undefined
+          && source[field] !== null
+        ) {
+          next[field] = source[field];
+          break;
+        }
+      }
+    });
+
+    if (next.status === "issued") next.issued = true;
+    else if (next.status) next.issued = false;
+
+    state.authoritativeOrders.set(orderId, next);
+    return next;
+  }
+
+  function applyLatestKnownOrderStatus(payload, orderIdValue) {
+    if (!payload) return payload;
+    const orderId = normalizeOrderId(
+      orderIdValue || payload.order?.orderId || payload.summary?.orderId,
+    );
+    const latest = state.authoritativeOrders.get(orderId);
+    if (!latest) return payload;
+
+    const patch = {};
+    AUTHORITATIVE_ORDER_FIELDS.forEach((field) => {
+      if (
+        Object.prototype.hasOwnProperty.call(latest, field)
+        && latest[field] !== undefined
+        && latest[field] !== null
+      ) {
+        patch[field] = latest[field];
+      }
+    });
+
+    return {
+      ...payload,
+      order: payload.order ? { ...payload.order, ...patch } : payload.order,
+      summary: payload.summary ? { ...payload.summary, ...patch } : { ...latest },
+    };
+  }
+
+  function orderStatusSignature(source) {
+    if (!source) return "";
+    return JSON.stringify([
+      source.status ?? "",
+      source.statusLabel ?? "",
+      Number(source.prepayment) || 0,
+      Number(source.debt) || 0,
+      Number(source.total) || 0,
+      Boolean(source.issued),
+    ]);
+  }
+
+  function requestAuthoritativeStatusRefresh(orderIdValue, firestoreOrder, firestoreSummary) {
+    const orderId = normalizeOrderId(orderIdValue);
+    const authoritative = state.authoritativeOrders.get(orderId);
+    if (!orderId || !authoritative) return;
+
+    const firestoreState = {
+      ...(firestoreOrder || {}),
+      ...(firestoreSummary || {}),
+    };
+
+    if (orderStatusSignature(authoritative) === orderStatusSignature(firestoreState)) {
+      return;
+    }
+
+    // Firestore сказал, что состояние отличается. Само значение ему не доверяем:
+    // один раз перечитываем source of truth через Apps Script.
+    if (state.statusRefreshTimer || state.statusRefreshPromise) return;
+
+    state.statusRefreshTimer = window.setTimeout(() => {
+      state.statusRefreshTimer = 0;
+      const request = refreshChatSummaries()
+        .catch((error) => {
+          console.warn("Не удалось сверить статус заказа с таблицей", error);
+        })
+        .finally(() => {
+          if (state.statusRefreshPromise === request) {
+            state.statusRefreshPromise = null;
+          }
+        });
+      state.statusRefreshPromise = request;
+    }, 250);
   }
 
   function clearUnreadLocally(orderId, payload = null) {
@@ -797,9 +933,15 @@ async function removeOutboxRequest(
       if (!access?.chatToken) throw new Error("Чат ещё не создан.");
       const cached = entry?.payload || await readCachedChat(normalized);
       const incoming = await fetchChatHistory(order, access, lastServerMessageId(cached));
+
+      // ВАЖНО: chat_history НЕ меняет authoritative-статус оплаты.
+      // Источник истины для статуса — только chat_summaries (Google Sheets).
+      // history/realtime используются для сообщений и могут содержать устаревшую копию статуса.
+
       const latest = state.chatCache.get(key)?.payload || await readCachedChat(normalized) || cached;
-      const payload = mergeChatPayload(latest, incoming);
+      let payload = mergeChatPayload(latest, incoming);
       payload.summary = suppressReadSummary(normalized, payload.summary);
+      payload = applyLatestKnownOrderStatus(payload, normalized);
       access.initialPayload = null;
       await cacheChat(normalized, payload);
       return payload;
@@ -859,6 +1001,12 @@ async function removeOutboxRequest(
     ].forEach((key) => localStorage.removeItem(key));
     savedOrders = [];
     state.summaries.clear();
+    state.authoritativeOrders.clear();
+    if (state.statusRefreshTimer) {
+      clearTimeout(state.statusRefreshTimer);
+      state.statusRefreshTimer = 0;
+    }
+    state.statusRefreshPromise = null;
     state.access.clear();
     state.chatCache.clear();
     try { await clearChatDatabase(); } catch (error) { console.warn("Не удалось очистить локальный чат", error); }
@@ -935,7 +1083,17 @@ async function removeOutboxRequest(
         const key = normalizeOrderId(item.order?.orderId || item.summary?.orderId);
         if (!key) return;
         item.summary = suppressReadSummary(key, item.summary);
+
+        // chat_summaries — подтверждённое состояние из Google Sheets.
+        rememberAuthoritativeOrderState(key, item.order, item.summary);
+        const authoritativePayload = applyLatestKnownOrderStatus(
+          { order: item.order || {}, summary: item.summary || {} },
+          key,
+        );
+        item.order = authoritativePayload.order;
+        item.summary = authoritativePayload.summary;
         state.summaries.set(key, item.summary);
+
         const saved = findSavedOrder(key);
         if (saved && item.order) {
           saved.schemaVersion = 2;
@@ -982,13 +1140,30 @@ async function removeOutboxRequest(
       }
       for (const order of savedOrders) {
         const cached = await readCachedChat(order.orderId);
-        if (cached?.summary) state.summaries.set(normalizeOrderId(order.orderId), cached.summary);
+        if (cached?.summary) {
+          const normalized = normalizeOrderId(order.orderId);
+          const corrected = applyLatestKnownOrderStatus(cached, normalized);
+          state.summaries.set(normalized, corrected?.summary || cached.summary);
+        }
       }
     }
     updateAppBadge();
     renderSavedOrdersSummary();
     if (document.getElementById("savedOrdersModal")?.style.display === "flex") {
       renderSavedOrdersList();
+    }
+
+    // Если чат открыт, сразу применяем подтверждённый Sheets-статус к шапке,
+    // не дожидаясь нового Firestore snapshot.
+    if (state.current?.payload && !elements.chatModal.hidden) {
+      const currentOrderId = normalizeOrderId(state.current.order?.orderId);
+      const correctedPayload = applyLatestKnownOrderStatus(
+        state.current.payload,
+        currentOrderId,
+      );
+      state.current.payload = correctedPayload;
+      void cacheChat(currentOrderId, correctedPayload);
+      renderChatPayload(correctedPayload, false);
     }
   }
 
@@ -1552,11 +1727,12 @@ async function resumeOutboxForCurrentChat() {
       return undefined;
     });
 
-    const cached = state.current.payload || await readCachedChat(order.orderId);
+    let cached = state.current.payload || await readCachedChat(order.orderId);
     if (!state.current || normalizeOrderId(state.current.order?.orderId) !== normalizedOrderId) return;
+    cached = applyLatestKnownOrderStatus(cached, normalizedOrderId);
     if (cached && Array.isArray(cached.messages)) {
-  // Старый уже существующий чат открываем сразу,
-  // без повторной шестисекундной задержки.
+  // Старый уже существующий чат открываем сразу, но статус оплаты берём
+  // из самой свежей общей сводки, а не из устаревшего chat cache.
   state.current.payload = cached;
   renderChatPayload(cached, !sameChat);
   showChatLoading(false);
@@ -1673,6 +1849,14 @@ async function resumeOutboxForCurrentChat() {
 
   function renderChatPayload(payload, scrollToEnd = false) {
     if (!payload?.order || !Array.isArray(payload.messages)) return;
+
+    // Последняя страховка от гонки Firestore/chat_history:
+    // перед КАЖДЫМ render принудительно возвращаем статус из chat_summaries.
+    const authoritativeOrderId = normalizeOrderId(
+      payload.order?.orderId || payload.summary?.orderId || state.current?.order?.orderId,
+    );
+    payload = applyLatestKnownOrderStatus(payload, authoritativeOrderId);
+
     const hasCustomerMessage = payload.messages.some((message) => message.sender === "client");
     const showMaxWarning = Boolean(
       !payload.localPending &&
