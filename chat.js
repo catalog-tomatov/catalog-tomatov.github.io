@@ -43,11 +43,13 @@ const CHAT_PAYMENT = {
     // Статус/суммы заказа, подтверждённые Apps Script (Google Sheets).
     // Firestore может сигнализировать об изменении, но не перезаписывает эту истину.
     authoritativeOrders: new Map(),
+    authoritativeOrderVersions: new Map(),
     statusRefreshTimer: 0,
     statusRefreshPromise: null,
     statusRefreshQueued: false,
     summaryRefreshSequence: 0,
     firestoreStatusSignals: new Map(),
+    firestoreStatusVersions: new Map(),
     access: new Map(),
     chatCache: new Map(),
     current: null,
@@ -193,8 +195,9 @@ const CHAT_PAYMENT = {
         let payload = mergeChatPayload(memory, incoming);
         payload.summary = suppressReadSummary(normalized, payload.summary);
 
-        // Firestore может содержать старую копию оплаты. Используем расхождение
-        // только как сигнал перечитать Google Sheets через Apps Script.
+        // Первый Firestore-снимок может быть старым. Но следующий документ от
+        // Apps Script с более новым updatedAtIso создан уже после записи Sheets
+        // и поэтому применяется сразу; chat_summaries остаётся страховкой.
         requestAuthoritativeStatusRefresh(
           normalized,
           incoming?.order,
@@ -655,11 +658,15 @@ const dbDelete = (store, key) =>
     "issued",
   ];
 
-  function rememberAuthoritativeOrderState(orderIdValue, order = null, summary = null) {
+  function rememberAuthoritativeOrderState(orderIdValue, order = null, summary = null, sourceVersion = Date.now()) {
     const orderId = normalizeOrderId(
       orderIdValue || order?.orderId || summary?.orderId,
     );
     if (!orderId) return null;
+
+    const version = Number(sourceVersion) || Date.now();
+    const previousVersion = state.authoritativeOrderVersions.get(orderId) || 0;
+    if (version < previousVersion) return state.authoritativeOrders.get(orderId) || null;
 
     const previous = state.authoritativeOrders.get(orderId) || {};
     const next = { ...previous };
@@ -682,6 +689,7 @@ const dbDelete = (store, key) =>
     else if (next.status) next.issued = false;
 
     state.authoritativeOrders.set(orderId, next);
+    state.authoritativeOrderVersions.set(orderId, version);
     return next;
   }
 
@@ -732,6 +740,33 @@ const dbDelete = (store, key) =>
       ...(firestoreOrder || {}),
       ...(firestoreSummary || {}),
     };
+
+    // Apps Script зеркалирует документ заказа только после записи и flush в
+    // Google Sheets. Первый снимок устанавливает baseline; следующий документ
+    // с более новым updatedAtIso уже является подтверждённым изменением и может
+    // применяться сразу, даже если резервный chat_summaries временно недоступен.
+    const firestoreVersion = Date.parse(
+      firestoreState.sourceUpdatedAt || firestoreState.updatedAt || "",
+    ) || 0;
+    const previousFirestoreVersion = state.firestoreStatusVersions.get(orderId) || 0;
+    const authoritativeVersion = state.authoritativeOrderVersions.get(orderId) || 0;
+    if (firestoreVersion > previousFirestoreVersion) {
+      state.firestoreStatusVersions.set(orderId, firestoreVersion);
+    }
+    const confirmedRealtimeChange = String(firestoreState.source || "") === "appscript"
+      && firestoreVersion > 0
+      && (
+        (previousFirestoreVersion > 0 && firestoreVersion > previousFirestoreVersion)
+        || (previousFirestoreVersion === 0 && authoritativeVersion > 0 && firestoreVersion > authoritativeVersion)
+      );
+    if (confirmedRealtimeChange) {
+      // Отменяем ответ chat_summaries, который мог стартовать до этого
+      // подтверждённого Firestore-документа.
+      state.summaryRefreshSequence += 1;
+      rememberAuthoritativeOrderState(orderId, firestoreOrder, firestoreSummary, firestoreVersion);
+      state.firestoreStatusSignals.delete(orderId);
+      return;
+    }
 
     const firestoreSignature = orderStatusSignature(firestoreState);
     if (orderStatusSignature(authoritative) === firestoreSignature) {
@@ -1066,7 +1101,9 @@ async function removeOutboxRequest(
     savedOrders = [];
     state.summaries.clear();
     state.authoritativeOrders.clear();
+    state.authoritativeOrderVersions.clear();
     state.firestoreStatusSignals.clear();
+    state.firestoreStatusVersions.clear();
     if (state.statusRefreshTimer) {
       clearTimeout(state.statusRefreshTimer);
       state.statusRefreshTimer = 0;
@@ -1870,7 +1907,7 @@ async function resumeOutboxForCurrentChat() {
       setChatError("");
       if (!state.realtimeReady.has(orderKey(order.orderId))) startChatPolling();
     } catch (error) {
-      if (state.current.payload?.messages?.length) {
+      if (state.current?.payload?.messages?.length) {
         setChatError("Нет связи с сервером. Показана последняя сохранённая история.");
       } else {
         setChatError(error.message || "Не удалось открыть чат.");

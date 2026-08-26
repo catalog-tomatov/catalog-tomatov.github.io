@@ -1,13 +1,13 @@
-const SHELL_CACHE = "catalog-shell-v90";
+const SHELL_CACHE = "catalog-shell-v91";
 const IMAGE_CACHE = "catalog-images-v5";
 const SHELL_FILES = [
   "./",
   "./index.html",
   "./style.css",
-  "./script.js",
-  "./chat.js",
+  "./script.js?v=67",
+  "./chat.js?v=23",
   "./firebase-config.js?v=1",
-  "./firebase-client.js?v=2",
+  "./firebase-client.js?v=3",
   "./manifest.json",
   "./chat-icon.png",
   "./max-icon.png",

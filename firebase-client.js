@@ -269,6 +269,8 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
         total: Number(order.total ?? orderData.total) || 0,
         prepayment: Number(order.prepayment ?? orderData.prepayment) || 0,
         debt: Number(order.debt ?? orderData.debt) || 0,
+        source: String(orderData.source || ""),
+        sourceUpdatedAt: firestoreDate(orderData.updatedAt, orderData.updatedAtIso),
         unread,
         lastMessage: last ? messagePreview(last) : "Сообщений пока нет",
         lastAt: last?.createdAt || "",
