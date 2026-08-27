@@ -5,7 +5,7 @@ const SHELL_FILES = [
   "./index.html",
   "./style.css",
   "./script.js?v=67",
-  "./chat.js?v=23",
+  "./chat.js?v=24",
   "./firebase-config.js?v=1",
   "./firebase-client.js?v=3",
   "./manifest.json",
@@ -17,8 +17,11 @@ const SHELL_FILES = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(SHELL_CACHE)
-      .then((cache) => Promise.allSettled(SHELL_FILES.map((url) => cache.add(url))))
+    caches
+      .open(SHELL_CACHE)
+      .then((cache) =>
+        Promise.allSettled(SHELL_FILES.map((url) => cache.add(url))),
+      )
       .then(() => self.skipWaiting()),
   );
 });
@@ -26,15 +29,20 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     Promise.all([
-      caches.keys().then((keys) => Promise.all(
-        keys
-          .filter((key) => (
-            (key.startsWith("catalog-shell-") && key !== SHELL_CACHE)
-            || (key.startsWith("catalog-images-") && key !== IMAGE_CACHE)
-            || key.startsWith("images-")
-          ))
-          .map((key) => caches.delete(key)),
-      )),
+      caches
+        .keys()
+        .then((keys) =>
+          Promise.all(
+            keys
+              .filter(
+                (key) =>
+                  (key.startsWith("catalog-shell-") && key !== SHELL_CACHE) ||
+                  (key.startsWith("catalog-images-") && key !== IMAGE_CACHE) ||
+                  key.startsWith("images-"),
+              )
+              .map((key) => caches.delete(key)),
+          ),
+        ),
       self.clients.claim(),
     ]),
   );
@@ -55,10 +63,15 @@ async function networkFirst(request) {
   const cache = await caches.open(SHELL_CACHE);
   try {
     const response = await fetch(request);
-    if (response.ok) await cache.put(request, response.clone()).catch(() => undefined);
+    if (response.ok)
+      await cache.put(request, response.clone()).catch(() => undefined);
     return response;
   } catch (error) {
-    return (await cache.match(request)) || (await cache.match("./index.html")) || Promise.reject(error);
+    return (
+      (await cache.match(request)) ||
+      (await cache.match("./index.html")) ||
+      Promise.reject(error)
+    );
   }
 }
 
@@ -77,9 +90,7 @@ self.addEventListener("fetch", (event) => {
 
   // Картинки кэшируем с ЛЮБОГО домена.
   if (request.destination === "image") {
-    event.respondWith(
-      cacheFirst(request, IMAGE_CACHE)
-    );
+    event.respondWith(cacheFirst(request, IMAGE_CACHE));
     return;
   }
 
@@ -93,13 +104,8 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  if (
-    ["script", "style", "font", "manifest"]
-      .includes(request.destination)
-  ) {
-    event.respondWith(
-      cacheFirst(request, SHELL_CACHE)
-    );
+  if (["script", "style", "font", "manifest"].includes(request.destination)) {
+    event.respondWith(cacheFirst(request, SHELL_CACHE));
   }
 });
 
@@ -107,36 +113,60 @@ self.addEventListener("fetch", (event) => {
  * отдельной кнопкой после создания внутреннего чата. */
 self.addEventListener("push", (event) => {
   let payload = {};
-  try { payload = event.data ? event.data.json() : {}; } catch { payload = {}; }
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch {
+    payload = {};
+  }
   const orderId = String(payload.orderId || "");
-  event.waitUntil((async () => {
-    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-    windows.forEach((client) => client.postMessage({
-      type: "catalog-chat-message",
-      orderId,
-      messageId: String(payload.messageId || ""),
-    }));
-    if (windows.some((client) => client.visibilityState === "visible")) return;
-    await self.registration.showNotification(payload.title || "Каталог томатов", {
-      body: payload.body || (orderId ? `Новое сообщение по заказу ${orderId}` : "Новое сообщение продавца"),
-      icon: "./tomato/favicon-192.png",
-      badge: "./tomato/favicon-192.png",
-      tag: payload.tag || (orderId ? `order-chat-${orderId}` : "order-chat"),
-      renotify: true,
-      data: { orderId },
-    });
-  })());
+  event.waitUntil(
+    (async () => {
+      const windows = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      });
+      windows.forEach((client) =>
+        client.postMessage({
+          type: "catalog-chat-message",
+          orderId,
+          messageId: String(payload.messageId || ""),
+        }),
+      );
+      if (windows.some((client) => client.visibilityState === "visible"))
+        return;
+      await self.registration.showNotification(
+        payload.title || "Каталог томатов",
+        {
+          body:
+            payload.body ||
+            (orderId
+              ? `Новое сообщение по заказу ${orderId}`
+              : "Новое сообщение продавца"),
+          icon: "./tomato/favicon-192.png",
+          badge: "./tomato/favicon-192.png",
+          tag:
+            payload.tag || (orderId ? `order-chat-${orderId}` : "order-chat"),
+          renotify: true,
+          data: { orderId },
+        },
+      );
+    })(),
+  );
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const orderId = String(event.notification.data?.orderId || "");
   const target = orderId ? `./?chat=${encodeURIComponent(orderId)}` : "./";
-  event.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (windows) => {
-    for (const client of windows) {
-      if ("navigate" in client) await client.navigate(target);
-      return client.focus();
-    }
-    return self.clients.openWindow(target);
-  }));
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then(async (windows) => {
+        for (const client of windows) {
+          if ("navigate" in client) await client.navigate(target);
+          return client.focus();
+        }
+        return self.clients.openWindow(target);
+      }),
+  );
 });
