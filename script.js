@@ -1696,7 +1696,7 @@ document.getElementById("openCartBtn").onclick = () => {
 document.getElementById("checkoutBtn").onclick = () => {
   vibrate(20);
   void refreshCatalogAvailabilityInBackground();
-  if (!foundClient) setCheckoutIdentityFieldsVisible(true);
+  prepareCheckoutForOpen();
   cartBox.classList.add("modal-hide");
 
   setTimeout(() => {
@@ -2000,6 +2000,8 @@ document.body.appendChild(blocker);
         document.getElementById("loadingBlocker")?.remove();
 
         checkoutModal.style.display = "none";
+
+        resetCheckoutAfterSuccessfulOrder();
 
         unlockBody();
 
@@ -2416,6 +2418,52 @@ let orderMode = "normal";
 let orderLabel = "";
 
 let orderSending = false;
+
+function resetCheckoutSubmitButton() {
+  const button = document.getElementById("createOrderBtn");
+  if (!button) return;
+
+  button.classList.remove("loading-btn");
+  button.disabled = false;
+  button.removeAttribute("aria-busy");
+  button.textContent = "Создать заказ";
+
+  const orderSubmitError = document.getElementById("orderSubmitError");
+  if (orderSubmitError) {
+    orderSubmitError.hidden = true;
+    orderSubmitError.textContent = "";
+  }
+}
+
+function prepareCheckoutForOpen() {
+  if (!orderSending) resetCheckoutSubmitButton();
+  if (!foundClient) setCheckoutIdentityFieldsVisible(true);
+}
+
+function resetCheckoutAfterSuccessfulOrder() {
+  orderSending = false;
+  foundClient = null;
+  clientOrders = [];
+  selectedOrderColumn = null;
+  selectedOrderId = null;
+  orderMode = "normal";
+  orderLabel = "";
+
+  nameInput.value = "";
+  phoneInput.value = "+7";
+  pickupPoint.value = "";
+  pvzAddress.value = "";
+  pickupTrigger.textContent = "Выберите точку выдачи";
+  pickupMenu.classList.remove("open");
+  pickupTrigger.setAttribute("aria-expanded", "false");
+
+  [nameInput, phoneInput, pickupTrigger, pvzAddress].forEach(clearCheckoutFieldError);
+  setCheckoutIdentityFieldsVisible(true);
+  resetCheckoutSubmitButton();
+
+  const orderLabelInput = document.getElementById("orderLabelInput");
+  if (orderLabelInput) orderLabelInput.value = "";
+}
 
 const pvzAddressField = document.getElementById("pvzAddressField");
 

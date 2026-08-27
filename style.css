@@ -5034,7 +5034,7 @@ canvas {
   border-radius: 17px 17px 17px 5px;
   background: #fff;
   color: #352b25;
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.42;
   box-shadow: 0 3px 10px rgba(62, 45, 32, 0.05);
   white-space: pre-wrap;
@@ -5052,7 +5052,7 @@ canvas {
   border: 0;
   background: #eeeae3;
   color: #665950;
-  font-size: 14px;
+  font-size: 16px;
   text-align: center;
   box-shadow: none;
 }
@@ -6818,7 +6818,7 @@ button:disabled,
 .chat-message.system .chat-message-bubble { max-width:88%; padding:7px 11px 6px; border:1px solid #e5e8e4; border-radius:13px; background:#f1f4f1; color:#657068; }
 .chat-structured-card { width:min(88%,340px); margin:5px 0; padding:12px; border-color:#e8ded2; border-radius:16px; background:rgba(255,253,249,.98); box-shadow:0 4px 12px rgba(72,49,31,.055); }
 .chat-payment-card { border-color:#d7e8dd; background:linear-gradient(145deg,#f7fcf8,#edf7f0); }
-.chat-structured-card>span { color:#0e8f6c; font-size:14px; letter-spacing:.4px; text-transform:uppercase; }
+.chat-structured-card>span { color:#0e8f6c; font-size:15px; letter-spacing:.4px; text-transform:uppercase; }
 .chat-structured-card>strong { margin:5px 0; color:#9b1801; font-size:20px; }
 .chat-structured-card>small { font-size:14px; line-height:1.4; }
 .chat-card-action,.chat-copy-phone { min-height:41px; margin-top:10px; border-radius:12px; font-size:15px; }
@@ -6846,7 +6846,7 @@ button:disabled,
 .chat-order-card>.chat-order-customer {
   margin-top:5px;
   color:#4f4944;
-  font-size:15px;
+  font-size:16px;
   font-weight:650;
   line-height:1.35;
   letter-spacing:0.4px;
@@ -6855,7 +6855,7 @@ button:disabled,
 .chat-order-card>.chat-order-summary {
   margin-top:8px;
   color:#655c55;
-  font-size:15px;
+  font-size:16px;
   font-weight:500;
   line-height:1.35;
   letter-spacing:0.4px;
@@ -6898,7 +6898,7 @@ button:disabled,
   color:#9b1801;
   background:linear-gradient(145deg,#fffdfa,#fff7f1);
   box-shadow:0 4px 10px rgba(94,53,27,.055);
-  font-size:15px;
+  font-size:16px;
   font-weight:800;
   line-height:1.2;
 }
@@ -6920,11 +6920,16 @@ button:disabled,
 .chat-card-action:active,
 .chat-copy-phone:active { transform:translateY(1px); box-shadow:inset 0 2px 5px rgba(77,47,28,.08); }
 .chat-payment-card { padding:13px; }
+.chat-payment-label {
+  max-width:100%;
+  line-height:1.2;
+  overflow-wrap:anywhere;
+}
 .chat-payment-details { display:grid; margin-top:8px; overflow:hidden; border:1px solid #dbe9e0; border-radius:13px; background:rgba(255,255,255,.7); }
 .chat-payment-detail { display:grid; grid-template-columns:88px minmax(0,1fr); gap:9px; padding:8px 10px; border-bottom:1px solid #e5eee8; }
 .chat-payment-detail:last-child { border-bottom:0; }
-.chat-payment-detail>span { color:#718078; font-size:13px; font-weight:700; }
-.chat-payment-detail>b { color:#3f3934; font-size:15px; font-weight:700; line-height:1.35; overflow-wrap:anywhere; }
+.chat-payment-detail>span { color:#718078; font-size:14px; font-weight:700; }
+.chat-payment-detail>b { color:#3f3934; font-size:16px; font-weight:700; line-height:1.35; overflow-wrap:anywhere; }
 .chat-payment-detail.note { grid-template-columns:1fr; gap:3px; background:#fffaf0; }
 .chat-payment-detail.note>span { color:#8d650c; }
 .chat-payment-detail.note>b { color:#6f6256; font-weight:500; }
@@ -6968,7 +6973,7 @@ button:disabled,
 
 .chat-payment-bank-item b {
   color: #3f3934;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   line-height: 1.2;
 }
