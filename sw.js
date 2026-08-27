@@ -1,4 +1,4 @@
-const SHELL_CACHE = "catalog-shell-v91";
+const SHELL_CACHE = "catalog-shell-v92";
 const IMAGE_CACHE = "catalog-images-v5";
 const SHELL_FILES = [
   "./",
@@ -132,8 +132,9 @@ self.addEventListener("push", (event) => {
           messageId: String(payload.messageId || ""),
         }),
       );
-      if (windows.some((client) => client.visibilityState === "visible"))
-        return;
+      // Показываем системное уведомление всегда. На iPhone свёрнутая PWA
+      // иногда ещё считается `visible`, из-за чего прежняя проверка
+      // ошибочно проглатывала push.
       await self.registration.showNotification(
         payload.title || "Каталог томатов",
         {
