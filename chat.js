@@ -5,8 +5,8 @@
   const CHAT_DB_VERSION = 2;
   const CHAT_SEASON_KEY = "tomatoChatSeasonId";
   const CHAT_CONFIG_KEY = "tomatoChatSeasonConfig";
-  const CHAT_POLL_FAST_INTERVAL = 2500;
-  const CHAT_POLL_IDLE_INTERVAL = 8000;
+  const CHAT_POLL_FAST_INTERVAL = 15000;
+  const CHAT_POLL_IDLE_INTERVAL = 45000;
   const CHAT_POLL_FAST_WINDOW = 60000;
   const CHAT_PUSH_SNOOZE_KEY = "tomatoChatPushSnoozedUntil";
   const CHAT_PUSH_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -59,6 +59,11 @@ const CHAT_PAYMENT = {
     chatActivityAt: 0,
     sellerRevealTimer: 0,
     pushPromptTimer: 0,
+    pushSyncPromise: null,
+    pushPendingAccess: new Map(),
+    pushSyncSuccessAt: new Map(),
+    pushSyncDeniedAt: new Map(),
+    pollFailures: 0,
     objectUrls: new Set(),
     createPromises: new Map(),
     readStates: new Map(),
@@ -207,6 +212,7 @@ const CHAT_PAYMENT = {
         // Перед любым render возвращаем статус/суммы из source of truth.
         payload = applyLatestKnownOrderStatus(payload, normalized);
         state.realtimeReady.add(key);
+        state.pollFailures = 0;
         state.summaries.set(normalized, payload.summary);
         void cacheChat(normalized, payload);
         renderSavedOrdersSummary();
@@ -452,22 +458,62 @@ const dbDelete = (store, key) =>
 
   async function syncChatPushSubscriptions(preferredAccess = null) {
     if (!chatPushSupported() || Notification.permission !== "granted") return false;
-    const subscription = await getChatPushSubscription();
-    const rows = await dbGetAll("access").catch(() => []);
-    const candidates = [...rows];
-    if (preferredAccess?.chatToken) candidates.push(preferredAccess);
-    const unique = new Map();
-    candidates.forEach((access) => {
-      if (
-        access?.chatToken
-        && access.seasonId === state.config?.seasonId
-        && normalizeOrderId(access.orderId)
-      ) unique.set(normalizeOrderId(access.orderId), access);
-    });
-    for (const access of unique.values()) {
-      await saveChatPushSubscription(subscription, access);
+    const preferredOrderId = normalizeOrderId(preferredAccess?.orderId);
+    if (preferredAccess?.chatToken && preferredOrderId) {
+      state.pushPendingAccess.set(preferredOrderId, preferredAccess);
     }
-    return true;
+    if (state.pushSyncPromise) return state.pushSyncPromise;
+
+    state.pushSyncPromise = (async () => {
+      const subscription = await getChatPushSubscription();
+      const endpoint = String(subscription?.endpoint || subscription?.toJSON?.().endpoint || "");
+      const refreshAfterMs = 6 * 60 * 60 * 1000;
+
+      do {
+        const queued = [...state.pushPendingAccess.values()];
+        state.pushPendingAccess.clear();
+        const rows = await dbGetAll("access").catch(() => []);
+        const unique = new Map();
+        [...queued, ...rows].forEach((access) => {
+          const orderId = normalizeOrderId(access?.orderId);
+          if (
+            access?.chatToken
+            && access.seasonId === state.config?.seasonId
+            && orderId
+          ) {
+            // Keep the freshly supplied access for the currently opened chat.
+            if (!unique.has(orderId)) unique.set(orderId, access);
+          }
+        });
+
+        for (const [orderId, access] of unique) {
+          const successKey = `${orderId}:${endpoint}`;
+          const successAt = Number(state.pushSyncSuccessAt.get(successKey) || 0);
+          if (Date.now() - successAt < refreshAfterMs) continue;
+          const deniedAt = Number(state.pushSyncDeniedAt.get(successKey) || 0);
+          if (Date.now() - deniedAt < 60 * 60 * 1000) continue;
+          try {
+            await saveChatPushSubscription(subscription, access);
+            state.pushSyncSuccessAt.set(successKey, Date.now());
+            state.pushSyncDeniedAt.delete(successKey);
+          } catch (error) {
+            // One expired token from an older saved order must not prevent
+            // notifications for the current valid order.
+            if (error?.code === "CHAT_ACCESS_DENIED") {
+              state.pushSyncDeniedAt.set(successKey, Date.now());
+              continue;
+            }
+            throw error;
+          }
+        }
+      } while (state.pushPendingAccess.size > 0);
+
+      return true;
+    })().finally(() => {
+      state.pushSyncPromise = null;
+    });
+
+    return state.pushSyncPromise;
   }
 
   function pushPromptSnoozed() {
@@ -1893,15 +1939,18 @@ async function resumeOutboxForCurrentChat() {
       if (!state.current || normalizeOrderId(state.current.order?.orderId) !== normalizedOrderId) return;
       state.current.access = access;
       scheduleChatPushPrompt({ ...access, orderId: order.orderId });
-      const payload = await refreshChatCache(order.orderId, access);
-      await showRefreshedChatIfOpen(order.orderId, payload, !cached?.messages?.length);
 
       // Сначала создаём/проверяем Firebase membership и подписку, и только
       // потом повторяем старый outbox. Так старые сообщения не стреляют в
       // Firestore до появления доступа.
-      await ensureRealtimeOrder(order, access).catch((realtimeError) => {
+      const realtimeStarted = await ensureRealtimeOrder(order, access).catch((realtimeError) => {
         console.warn("Firestore недоступен, оставлен резервный канал", realtimeError);
+        return false;
       });
+      if (!realtimeStarted) {
+        const payload = await refreshChatCache(order.orderId, access);
+        await showRefreshedChatIfOpen(order.orderId, payload, !cached?.messages?.length);
+      }
       await resumeOutboxForCurrentChat();
 
       setChatError("");
@@ -1919,6 +1968,7 @@ async function resumeOutboxForCurrentChat() {
 
   function closeOrderChat() {
     stopChatPolling();
+    state.pollFailures = 0;
     if (state.sellerRevealTimer) {
     clearTimeout(state.sellerRevealTimer);
     state.sellerRevealTimer = 0;
@@ -2513,16 +2563,13 @@ return card;
     return request;
   }
 
-  function startChatPolling(elapsedMs = 0) {
+  function startChatPolling() {
     stopChatPolling();
     if (state.current && state.realtimeReady.has(orderKey(state.current.order?.orderId))) return;
     if (!state.current || document.hidden || elements.chatModal.hidden) return;
     const recentlyActive = Date.now() - state.chatActivityAt < CHAT_POLL_FAST_WINDOW;
     const interval = recentlyActive ? CHAT_POLL_FAST_INTERVAL : CHAT_POLL_IDLE_INTERVAL;
-    state.pollTimer = window.setTimeout(
-      pollCurrentChat,
-      Math.max(100, interval - elapsedMs),
-    );
+    state.pollTimer = window.setTimeout(pollCurrentChat, interval);
   }
 
   function activateChatPolling(refreshNow = false) {
@@ -2544,17 +2591,20 @@ return card;
 
   async function pollCurrentChat() {
     if (!state.current || document.hidden || elements.chatModal.hidden) return;
-    const startedAt = Date.now();
     const orderId = state.current.order.orderId;
     try {
       const payload = await refreshChatCache(orderId, state.current.access);
       await showRefreshedChatIfOpen(orderId, payload, false);
+      state.pollFailures = 0;
       setChatError("");
     } catch (error) {
-      console.warn("Обновление чата отложено", error);
-      setChatError("Не удалось обновить сообщения. Повторим автоматически.");
+      state.pollFailures += 1;
+      if (state.pollFailures >= 3) {
+        console.warn("Обновление чата отложено", error);
+        setChatError("Связь нестабильна. Показаны сохранённые сообщения; обновление продолжится автоматически.");
+      }
     } finally {
-      startChatPolling(Date.now() - startedAt);
+      startChatPolling();
     }
   }
 
@@ -2843,7 +2893,10 @@ function queuedDelivery(request) {
           text: request.text,
           messageId: request.requestId,
         })
-      : await apiPost(request, 30000);
+      // Загрузка чека проходит через Apps Script и Google Drive. На первом
+      // обращении Drive и при холодном старте 30 секунд недостаточно: браузер
+      // обрывал уже выполняющийся запрос и оставлял карточку в outbox.
+      : await apiPost(request, request.attachment ? 90000 : 30000);
 
     let confirmedMessage =
       result.message;
@@ -3037,7 +3090,20 @@ function queuedDelivery(request) {
       ) === orderId;
 
     if (currentIsSameChat) {
-      optimistic.delivery = "error";
+      // Realtime/history может успеть заменить массив сообщений, пока файл
+      // загружается. Меняем состояние актуальной карточки, а не только старой
+      // ссылки optimistic — иначе интерфейс навсегда показывал «Загружается…».
+      const currentOptimistic = state.current.payload.messages.find(
+        (item) =>
+          item.messageId === optimistic.messageId ||
+          item.localRequestId === request.requestId ||
+          item.clientMessageId === request.requestId ||
+          item.retryRequest?.requestId === request.requestId
+      );
+
+      const failedMessage = currentOptimistic || optimistic;
+      failedMessage.delivery = "error";
+      failedMessage.retryRequest = failedMessage.retryRequest || request;
 
       await cacheChat(
         orderId,
