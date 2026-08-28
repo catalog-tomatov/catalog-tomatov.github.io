@@ -12,7 +12,6 @@
   const CHAT_PUSH_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
 
   const CHAT_SELLER_DELAY = 6000;
-  const CHAT_ADDON_SELLER_DELAY = 700;
 
 const CHAT_PAYMENT = {
   sbpPhone: "+79036094545",
@@ -68,7 +67,9 @@ const CHAT_PAYMENT = {
     objectUrls: new Set(),
     createPromises: new Map(),
     readStates: new Map(),
+    memoryOutbox: new Map(),
     realtimeSubscriptions: new Map(),
+    realtimeConnections: new Map(),
     realtimeReady: new Set(),
     realtimeRelinking: new Set(),
     initialized: false,
@@ -162,6 +163,10 @@ const CHAT_PAYMENT = {
 
     const key = orderKey(order.orderId);
     if (state.realtimeSubscriptions.has(key)) return true;
+    const pendingConnection = state.realtimeConnections.get(key);
+    if (pendingConnection) return pendingConnection;
+
+    const connection = (async () => {
 
     // ВАЖНО: не доверяем сохранённому firebaseUid как доказательству membership.
     // Firestore membership мог отсутствовать, поэтому перед новой подпиской
@@ -268,6 +273,15 @@ const CHAT_PAYMENT = {
     });
     state.realtimeSubscriptions.set(key, unsubscribe);
     return true;
+    })();
+    state.realtimeConnections.set(key,connection);
+    try {
+      return await connection;
+    } finally {
+      if (state.realtimeConnections.get(key) === connection) {
+        state.realtimeConnections.delete(key);
+      }
+    }
   }
 
   function findSavedOrder(orderId) {
@@ -332,6 +346,7 @@ const dbDelete = (store, key) =>
   );
 
   async function clearChatDatabase() {
+    state.memoryOutbox.clear();
     const db = await openDb();
     try {
       await Promise.all(["access", "chats", "meta", "outbox"].map((storeName) => new Promise((resolve, reject) => {
@@ -894,7 +909,7 @@ async function saveOutboxRequest(
     attachment: request.attachment || null,
   };
 
-  await dbPut("outbox", {
+  const row = {
     key: outboxKey(
       orderId,
       request.requestId
@@ -910,7 +925,15 @@ async function saveOutboxRequest(
       new Date().toISOString(),
 
     request: storedRequest,
-  });
+  };
+  try {
+    await dbPut("outbox",row);
+  } catch (error) {
+    // Private mode and storage pressure can disable IndexedDB. Keep a
+    // session-level outbox so an otherwise healthy network can still send.
+    console.warn("IndexedDB outbox недоступен, используем память",error);
+    state.memoryOutbox.set(row.key,row);
+  }
 }
 
 async function readOutboxForOrder(orderId) {
@@ -920,10 +943,17 @@ async function readOutboxForOrder(orderId) {
   const seasonId =
     state.config?.seasonId || "";
 
-  const rows =
-    await dbGetAll("outbox");
+  let rows = [];
+  try {
+    rows = await dbGetAll("outbox");
+  } catch (error) {
+    console.warn("IndexedDB outbox недоступен при чтении",error);
+  }
+  const merged = new Map();
+  rows.forEach((row) => merged.set(row.key,row));
+  state.memoryOutbox.forEach((row,key) => merged.set(key,row));
 
-  return rows
+  return Array.from(merged.values())
     .filter(
       (row) =>
         row.orderId === normalized &&
@@ -940,10 +970,13 @@ async function removeOutboxRequest(
   orderId,
   requestId
 ) {
-  await dbDelete(
-    "outbox",
-    outboxKey(orderId, requestId)
-  );
+  const key = outboxKey(orderId,requestId);
+  state.memoryOutbox.delete(key);
+  try {
+    await dbDelete("outbox",key);
+  } catch (error) {
+    console.warn("IndexedDB outbox недоступен при очистке",error);
+  }
 }
 
   function lastServerMessageId(payload) {
@@ -1479,10 +1512,6 @@ async function removeOutboxRequest(
       return;
     }
 
-    // Специальный старт нужен только для дозаказа, который до этого был
-    // отправлен в MAX. Обычный пустой чат сохраняет прежнюю логику.
-    order.addonFromMaxPending =
-      order.mode === "addon" && order.contactChannel === "max";
     order.contactChannel = "chat";
     persistSavedOrders();
 
@@ -1524,29 +1553,11 @@ async function removeOutboxRequest(
     elements.chatError.hidden = !message;
   }
 
-  async function ensureChatAccess(order, preferredAccess = null) {
-  let access = preferredAccess ||
+  async function ensureChatAccess(order) {
+  let access =
     await getAccess(order.orderId);
 
   if (access?.chatToken) {
-    if (order.addonFromMaxPending === true) {
-      const result = await apiPost({
-        action: "chat_switch_channel",
-        orderId: order.orderId,
-        chatToken: access.chatToken,
-        addonFromMax: true,
-        clientTimeZone:
-          Intl.DateTimeFormat()
-            .resolvedOptions()
-            .timeZone,
-      }, 25000);
-      delete order.addonFromMaxPending;
-      persistSavedOrders();
-      return {
-        ...access,
-        initialPayload: result,
-      };
-    }
     return access;
   }
 
@@ -1586,7 +1597,6 @@ async function removeOutboxRequest(
       contactChannel: order.contactChannel === "max" || order.contactChannel === "chat"
         ? order.contactChannel
         : "",
-      addonFromMax: order.addonFromMaxPending === true,
     }, 25000);
 
     await putAccess(
@@ -1597,9 +1607,6 @@ async function removeOutboxRequest(
         chatCreated: true,
       }
     );
-
-    delete order.addonFromMaxPending;
-    persistSavedOrders();
 
     return {
       ...access,
@@ -1636,19 +1643,6 @@ async function removeOutboxRequest(
   const orderKeyPart = orderId.replace(/[^0-9A-Za-z]/g, "");
   const now = Date.now();
   const summary = state.summaries.get(orderId) || {};
-  const localTotal = Number(order.total) || Number(summary.total) || 0;
-  const localPrepayment = Number(summary.prepayment) || 0;
-  const hasKnownDebt = summary.debt !== undefined && summary.debt !== null
-    && Number.isFinite(Number(summary.debt));
-  const localDebt = localTotal > 0
-    ? Math.max(localTotal - localPrepayment, 0)
-    : hasKnownDebt ? Math.max(Number(summary.debt), 0) : 0;
-  const localStatus = localDebt > 0
-    ? localPrepayment > 0 ? "debt" : "unpaid"
-    : localPrepayment > 0 ? "paid" : summary.status || "unpaid";
-  const localStatusLabel = localStatus === "debt"
-    ? `ТРЕБУЕТСЯ ДОПЛАТИТЬ ${localDebt.toLocaleString("ru-RU")} ₽`
-    : localStatus === "paid" ? "ОПЛАЧЕН" : summary.statusLabel || "НЕ ОПЛАЧЕН";
 
   const publicOrder = {
     seasonId,
@@ -1658,12 +1652,12 @@ async function removeOutboxRequest(
     createdAt: order.createdAt || new Date(now).toISOString(),
     itemCount: Number(order.totalItems) || 0,
     varietyCount: Array.isArray(order.items) ? order.items.length : 0,
-    total: localTotal,
-    prepayment: localPrepayment,
-    debt: localDebt,
+    total: Number(order.total) || 0,
+    prepayment: Number(summary.prepayment) || 0,
+    debt: Number(summary.debt) || Number(order.total) || 0,
     issued: summary.status === "issued",
-    status: localStatus,
-    statusLabel: localStatusLabel,
+    status: summary.status || "unpaid",
+    statusLabel: summary.statusLabel || "НЕ ОПЛАЧЕН",
     items: Array.isArray(order.items) ? order.items : [],
   };
 
@@ -1671,36 +1665,7 @@ async function removeOutboxRequest(
 
   const messages = [];
 
-if (order.contactChannel === "chat" && order.addonFromMaxPending === true) {
-  const greeting = getChatGreeting();
-  messages.push(
-    {
-      messageId: `addon_client_${messageBase}`,
-      orderId,
-      sender: "client",
-      type: "text",
-      text: `${greeting}! Направляю дозаказ по семенам томатов для подтверждения и оплаты 🍅`,
-      createdAt: new Date(now).toISOString(),
-    },
-    {
-      messageId: `addon_order_${messageBase}`,
-      orderId,
-      sender: "client",
-      type: "order_card",
-      text: "",
-      snapshot: publicOrder,
-      createdAt: new Date(now + 1).toISOString(),
-    },
-    {
-      messageId: `addon_seller_${messageBase}`,
-      orderId,
-      sender: "seller",
-      type: "text",
-      text: `${greeting}! 🌱 Спасибо за дозаказ.`,
-      createdAt: new Date(now + CHAT_ADDON_SELLER_DELAY).toISOString(),
-    },
-  );
-} else if (order.contactChannel === "chat") {
+if (order.contactChannel === "chat") {
   messages.push(
     {
       messageId:
@@ -1948,33 +1913,10 @@ async function resumeOutboxForCurrentChat() {
       return undefined;
     });
 
-    const isPendingAddonSwitch = order.addonFromMaxPending === true;
-    let cached = state.current.payload;
-    if (!isPendingAddonSwitch && !cached) {
-      cached = await readCachedChat(order.orderId);
-    }
+    let cached = state.current.payload || await readCachedChat(order.orderId);
     if (!state.current || normalizeOrderId(state.current.order?.orderId) !== normalizedOrderId) return;
     cached = applyLatestKnownOrderStatus(cached, normalizedOrderId);
-    if (isPendingAddonSwitch) {
-      // MAX already created an intentionally empty chat record. Do not render
-      // that empty cache while the channel switch is being confirmed.
-      const pendingPayload = buildPendingInitialPayload(order);
-      state.current.sellerRevealAt = Date.now() + CHAT_ADDON_SELLER_DELAY;
-      state.current.payload = pendingPayload;
-      renderChatPayload(pendingPayload, true);
-      showChatLoading(false);
-
-      const revealOrderId = normalizeOrderId(order.orderId);
-      state.sellerRevealTimer = window.setTimeout(() => {
-        state.sellerRevealTimer = 0;
-        if (
-          !state.current ||
-          normalizeOrderId(state.current.order?.orderId) !== revealOrderId
-        ) return;
-        state.current.sellerRevealAt = 0;
-        renderChatPayload(state.current.payload, true);
-      }, CHAT_ADDON_SELLER_DELAY);
-    } else if (cached && Array.isArray(cached.messages)) {
+    if (cached && Array.isArray(cached.messages)) {
   // Старый уже существующий чат открываем сразу, но статус оплаты берём
   // из самой свежей общей сводки, а не из устаревшего chat cache.
   state.current.payload = cached;
@@ -2018,10 +1960,7 @@ async function resumeOutboxForCurrentChat() {
         normalizeOrderId(state.current.order?.orderId) === normalizedOrderId
         ? state.current.access
         : null;
-      const existingAccess = currentAccess || (earlyAccess?.chatToken ? earlyAccess : null);
-      const access = order.addonFromMaxPending === true
-        ? await ensureChatAccess(order, existingAccess)
-        : existingAccess || await ensureChatAccess(order);
+      const access = currentAccess || (earlyAccess?.chatToken ? earlyAccess : null) || await ensureChatAccess(order);
       const currentReadPayload = state.current &&
         normalizeOrderId(state.current.order?.orderId) === normalizedOrderId
         ? state.current.payload
@@ -2034,31 +1973,6 @@ async function resumeOutboxForCurrentChat() {
       if (!state.current || normalizeOrderId(state.current.order?.orderId) !== normalizedOrderId) return;
       state.current.access = access;
       scheduleChatPushPrompt({ ...access, orderId: order.orderId });
-
-      // The optimistic addon view intentionally contains no payment card.
-      // Render the Apps Script response immediately, before waiting for
-      // Firestore, so the confirmed remainder appears once and never changes.
-      if (access.initialPayload?.order && Array.isArray(access.initialPayload.messages)) {
-        rememberAuthoritativeOrderState(
-          normalizedOrderId,
-          access.initialPayload.order,
-          access.initialPayload.summary,
-          Date.now(),
-        );
-        const confirmedPayload = applyLatestKnownOrderStatus(
-          access.initialPayload,
-          normalizedOrderId,
-        );
-        state.summaries.set(normalizedOrderId, confirmedPayload.summary || {});
-        state.current.payload = confirmedPayload;
-        state.current.sellerRevealAt = 0;
-        if (state.sellerRevealTimer) {
-          clearTimeout(state.sellerRevealTimer);
-          state.sellerRevealTimer = 0;
-        }
-        renderChatPayload(confirmedPayload, true);
-        await cacheChat(normalizedOrderId, confirmedPayload);
-      }
 
       // Сначала создаём/проверяем Firebase membership и подписку, и только
       // потом повторяем старый outbox. Так старые сообщения не стреляют в
@@ -2308,8 +2222,7 @@ async function resumeOutboxForCurrentChat() {
     const card = document.createElement("article");
     card.className = "chat-structured-card chat-payment-card";
     const label = document.createElement("span");
-    label.className = "chat-payment-label";
-    label.textContent = String(snapshot.label || "К ОПЛАТЕ");
+    label.textContent = "К ОПЛАТЕ";
     const amount = document.createElement("strong");
     amount.textContent = `${Number(snapshot.amount || 0).toLocaleString("ru-RU")} ₽`;
     const details = document.createElement("div");
@@ -2669,17 +2582,25 @@ return card;
           viewer: "client",
         })
       : Promise.resolve();
-    const request = realtimeRequest.then(() => apiPost({
-      action: "chat_read",
-      orderId,
-      chatToken,
-      viewer: "customer",
-    }).catch((error) => {
-      console.warn("Не удалось отметить чат прочитанным", error);
-    }).finally(() => {
+    const request = realtimeRequest
+      .catch((error) => {
+        // Firestore read-state is an acceleration only. A temporary realtime
+        // failure must not prevent the durable Apps Script read receipt.
+        console.warn("Не удалось отметить realtime-чат прочитанным", error);
+      })
+      .then(() => apiPost({
+        action: "chat_read",
+        orderId,
+        chatToken,
+        viewer: "customer",
+      }))
+      .catch((error) => {
+        console.warn("Не удалось отметить чат прочитанным", error);
+      })
+      .finally(() => {
       const latest = state.readStates.get(orderId);
       if (latest?.promise === request) state.readStates.set(orderId, { ...latest, promise: null });
-    }));
+      });
     state.readStates.set(orderId, { ...existingState, promise: request });
     return request;
   }
@@ -3004,8 +2925,10 @@ function queuedDelivery(request) {
     // Текст идёт напрямую в Firestore независимо от того, успел ли
     // onSnapshot уже прислать первый snapshot. Вложения остаются на Apps Script/Drive.
     const useRealtime = !request.attachment && bridge;
-    const result = useRealtime
-      ? await bridge.sendText({
+    let result;
+    if (useRealtime) {
+      try {
+        result = await bridge.sendText({
           apiUrl: chatApiUrl(),
           seasonId: state.config?.seasonId || "",
           orderId: request.orderId,
@@ -3013,11 +2936,22 @@ function queuedDelivery(request) {
           sender: "client",
           text: request.text,
           messageId: request.requestId,
-        })
+        });
+      } catch (realtimeError) {
+        // The request id is stable in both transports. If Firestore is down or
+        // its relay times out, Apps Script can safely accept the same text
+        // without creating a second message.
+        console.warn("Realtime-отправка недоступна, используем резерв", realtimeError);
+        state.realtimeReady.delete(orderKey(orderId));
+        result = await apiPost(request,30000);
+        startChatPolling();
+      }
+    } else {
       // Загрузка чека проходит через Apps Script и Google Drive. На первом
       // обращении Drive и при холодном старте 30 секунд недостаточно: браузер
       // обрывал уже выполняющийся запрос и оставлял карточку в outbox.
-      : await apiPost(request, request.attachment ? 90000 : 30000);
+      result = await apiPost(request,request.attachment ? 90000 : 30000);
+    }
 
     let confirmedMessage =
       result.message;

@@ -1,13 +1,13 @@
-const SHELL_CACHE = "catalog-shell-v92";
+const SHELL_CACHE = "catalog-shell-v94";
 const IMAGE_CACHE = "catalog-images-v5";
 const SHELL_FILES = [
   "./",
   "./index.html",
-  "./style.css",
-  "./script.js?v=69",
-  "./chat.js?v=30",
+  "./style.css?v=59",
+  "./script.js?v=71",
+  "./chat.js?v=32",
   "./firebase-config.js?v=1",
-  "./firebase-client.js?v=3",
+  "./firebase-client.js?v=5",
   "./manifest.json",
   "./chat-icon.png",
   "./max-icon.png",
@@ -19,9 +19,9 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
       .open(SHELL_CACHE)
-      .then((cache) =>
-        Promise.allSettled(SHELL_FILES.map((url) => cache.add(url))),
-      )
+      // addAll is deliberately atomic: if an essential shell file is missing,
+      // the previous working service worker stays active and its cache is kept.
+      .then((cache) => cache.addAll(SHELL_FILES))
       .then(() => self.skipWaiting()),
   );
 });
