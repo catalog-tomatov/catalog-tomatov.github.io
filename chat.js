@@ -1399,7 +1399,7 @@ async function removeOutboxRequest(
     const status = effectiveOrderStatus(source);
     if (status === "debt") {
       const debt = Number(source?.debt) || 0;
-      return `ТРЕБУЕТСЯ ДОПЛАТИТЬ ${debt.toLocaleString("ru-RU")}\u00A0₽`;
+      return `ДОПЛАТИТЬ ${debt.toLocaleString("ru-RU")}\u00A0₽`;
     }
     return source?.statusLabel || "НЕ ОПЛАЧЕНО";
   }
