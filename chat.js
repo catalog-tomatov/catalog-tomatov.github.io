@@ -5,7 +5,7 @@
   const CHAT_DB_VERSION = 2;
   const CHAT_SEASON_KEY = "tomatoChatSeasonId";
   const CHAT_CONFIG_KEY = "tomatoChatSeasonConfig";
-  const CHAT_POLL_FAST_INTERVAL = 1000;
+  const CHAT_POLL_FAST_INTERVAL = 3000;
   const CHAT_POLL_IDLE_INTERVAL = 15000;
   const CHAT_POLL_FAST_WINDOW = 60000;
   const CHAT_PUSH_SNOOZE_KEY = "tomatoChatPushSnoozedUntil";
@@ -158,12 +158,6 @@ const CHAT_PAYMENT = {
   }
 
   async function ensureRealtimeOrder(order, access, forceLink = false) {
-    // Firestore is intentionally disabled until its server identity is
-    // configured. The durable Apps Script channel remains the source of truth
-    // and active-chat polling provides predictable delivery without a
-    // ten-second realtime timeout on every open.
-    return false;
-    /* istanbul ignore next */
     const bridge = realtimeBridge();
     if (!bridge || !state.config?.seasonId || !access?.chatToken) return false;
 
@@ -1994,17 +1988,14 @@ async function resumeOutboxForCurrentChat() {
       state.current.access = access;
       scheduleChatPushPrompt({ ...access, orderId: order.orderId });
 
-      // Сначала создаём/проверяем Firebase membership и подписку, и только
-      // потом повторяем старый outbox. Так старые сообщения не стреляют в
-      // Firestore до появления доступа.
-      const realtimeStarted = await ensureRealtimeOrder(order, access).catch((realtimeError) => {
+      // Firebase подключается параллельно и никогда не задерживает открытие
+      // чата. Apps Script остаётся источником первого снимка и резервом.
+      void ensureRealtimeOrder(order, access).catch((realtimeError) => {
         console.warn("Firestore недоступен, оставлен резервный канал", realtimeError);
-        return false;
+        startChatPolling();
       });
-      if (!realtimeStarted) {
-        const payload = await refreshChatCache(order.orderId, access);
-        await showRefreshedChatIfOpen(order.orderId, payload, !cached?.messages?.length);
-      }
+      const payload = await refreshChatCache(order.orderId, access);
+      await showRefreshedChatIfOpen(order.orderId, payload, !cached?.messages?.length);
       await resumeOutboxForCurrentChat();
 
       setChatError("");

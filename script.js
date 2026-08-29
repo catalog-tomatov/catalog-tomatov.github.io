@@ -4391,7 +4391,7 @@ if (pendingSheetData) {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register("./sw.js?v=96");
+    navigator.serviceWorker.register("./sw.js?v=97");
   });
 }
 
