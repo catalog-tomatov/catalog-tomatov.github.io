@@ -1716,12 +1716,12 @@ async function removeOutboxRequest(
   const now = Date.now();
   const summary = state.summaries.get(orderId) || {};
   const isAddon = order.lastSubmissionMode === "addon";
-  const visibleItems = isAddon && Array.isArray(order.lastSubmissionItems)
-    ? order.lastSubmissionItems
-    : Array.isArray(order.items) ? order.items : [];
-  const visibleTotal = isAddon
-    ? Number(order.lastSubmissionTotal) || 0
-    : Number(order.total) || 0;
+  // После дозаказа текст остаётся про дозаказ, но карточка всегда показывает
+  // весь актуальный заказ. Иначе покупатель видел только добавленные позиции.
+  const visibleItems = Array.isArray(order.items) ? order.items : [];
+  const visibleTotal = Number(order.total) || 0;
+  const prepayment = Math.max(Number(summary.prepayment) || 0,0);
+  const debt = Math.max(visibleTotal - prepayment,0);
 
   const publicOrder = {
     seasonId,
@@ -1732,8 +1732,8 @@ async function removeOutboxRequest(
     itemCount: visibleItems.reduce((sum, item) => sum + (Number(item.qty) || 0), 0),
     varietyCount: visibleItems.length,
     total: visibleTotal,
-    prepayment: Number(summary.prepayment) || 0,
-    debt: Number(summary.debt) || Number(order.total) || 0,
+    prepayment,
+    debt,
     issued: summary.status === "issued",
     status: effectiveOrderStatus(summary),
     statusLabel: effectiveOrderStatusLabel(summary),
@@ -1789,7 +1789,7 @@ if (order.contactChannel === "chat") {
       type: "payment_card",
       text: "",
       snapshot: {
-        amount: publicOrder.total,
+        amount: publicOrder.debt,
       },
       createdAt:
         new Date(
