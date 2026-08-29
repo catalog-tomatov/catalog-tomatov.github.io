@@ -242,6 +242,7 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
   );
   const readRef = firestoreSdk.doc(db, `${basePath}/readStates/${user.uid}`);
   let orderData = null;
+  let orderFromCache = true;
   let messages = [];
   let readAt = 0;
 
@@ -271,6 +272,8 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
         debt: Number(order.debt ?? orderData.debt) || 0,
         source: String(orderData.source || ""),
         sourceUpdatedAt: firestoreDate(orderData.updatedAt, orderData.updatedAtIso),
+        revision: String(orderData.revision || ""),
+        realtimeFromCache: orderFromCache,
         unread,
         lastMessage: last ? messagePreview(last) : "Сообщений пока нет",
         lastAt: last?.createdAt || "",
@@ -289,6 +292,7 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
   const unsubscribers = [
     firestoreSdk.onSnapshot(orderRef, (snapshot) => {
       orderData = snapshot.exists() ? snapshot.data() : null;
+      orderFromCache = snapshot.metadata.fromCache;
       emit();
     }, fail),
     firestoreSdk.onSnapshot(messagesQuery, (snapshot) => {

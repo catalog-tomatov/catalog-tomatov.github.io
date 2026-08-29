@@ -796,7 +796,7 @@ const dbDelete = (store, key) =>
   function requestAuthoritativeStatusRefresh(orderIdValue, firestoreOrder, firestoreSummary) {
     const orderId = normalizeOrderId(orderIdValue);
     const authoritative = state.authoritativeOrders.get(orderId);
-    if (!orderId || !authoritative) return;
+    if (!orderId) return;
 
     const firestoreState = {
       ...(firestoreOrder || {}),
@@ -811,24 +811,22 @@ const dbDelete = (store, key) =>
       firestoreState.sourceUpdatedAt || firestoreState.updatedAt || "",
     ) || 0;
     const previousFirestoreVersion = state.firestoreStatusVersions.get(orderId) || 0;
-    const authoritativeVersion = state.authoritativeOrderVersions.get(orderId) || 0;
     if (firestoreVersion > previousFirestoreVersion) {
       state.firestoreStatusVersions.set(orderId, firestoreVersion);
     }
     const confirmedRealtimeChange = String(firestoreState.source || "") === "appscript"
-      && firestoreVersion > 0
-      && (
-        (previousFirestoreVersion > 0 && firestoreVersion > previousFirestoreVersion)
-        || (previousFirestoreVersion === 0 && authoritativeVersion > 0 && firestoreVersion > authoritativeVersion)
-      );
+      && firestoreState.realtimeFromCache !== true
+      && firestoreVersion > 0;
     if (confirmedRealtimeChange) {
-      // Отменяем ответ chat_summaries, который мог стартовать до этого
-      // подтверждённого Firestore-документа.
+      // Этот документ записан Apps Script уже после SpreadsheetApp.flush().
+      // Применяем его сразу; медленный chat_summaries остаётся только резервом.
       state.summaryRefreshSequence += 1;
       rememberAuthoritativeOrderState(orderId, firestoreOrder, firestoreSummary, firestoreVersion);
       state.firestoreStatusSignals.delete(orderId);
       return;
     }
+
+    if (!authoritative) return;
 
     const firestoreSignature = orderStatusSignature(firestoreState);
     if (orderStatusSignature(authoritative) === firestoreSignature) {
