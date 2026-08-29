@@ -212,11 +212,12 @@ function firestoreDate(value, fallback = "") {
 
 function realtimeMessage(documentSnapshot) {
   const data = documentSnapshot.data() || {};
+  const isPaymentStatus = data.eventKind === "payment_status";
   return {
     messageId: String(data.messageId || documentSnapshot.id),
     orderId: String(data.orderId || ""),
-    sender: String(data.sender || "system"),
-    type: String(data.type || "text"),
+    sender: isPaymentStatus ? "system" : String(data.sender || "system"),
+    type: isPaymentStatus ? "system" : String(data.type || "text"),
     text: String(data.text || ""),
     attachmentId: String(data.attachmentId || ""),
     attachment: data.attachment || null,
