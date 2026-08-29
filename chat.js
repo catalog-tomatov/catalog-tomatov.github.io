@@ -5,7 +5,7 @@
   const CHAT_DB_VERSION = 2;
   const CHAT_SEASON_KEY = "tomatoChatSeasonId";
   const CHAT_CONFIG_KEY = "tomatoChatSeasonConfig";
-  const CHAT_POLL_FAST_INTERVAL = 3000;
+  const CHAT_POLL_FAST_INTERVAL = 1000;
   const CHAT_POLL_IDLE_INTERVAL = 15000;
   const CHAT_POLL_FAST_WINDOW = 60000;
   const CHAT_PUSH_SNOOZE_KEY = "tomatoChatPushSnoozedUntil";
@@ -3381,7 +3381,7 @@ function queuedDelivery(request) {
     const orderId = normalizeOrderId(payload.orderId);
     if (orderId) preloadOrderChat(orderId);
     if (state.current && normalizeOrderId(state.current.order?.orderId) === orderId) {
-      activateChatPolling(false);
+      activateChatPolling(true);
     } else {
       void refreshChatSummaries();
     }
