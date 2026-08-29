@@ -201,6 +201,14 @@ function saveOrderSnapshot(snapshot) {
       price: Number(item.price) || 0,
       qty: Number(item.qty) || 0,
     })),
+    lastSubmissionMode: snapshot.mode === "addon" ? "addon" : "normal",
+    lastSubmissionTotal: Number(snapshot.total) || 0,
+    lastSubmissionItems: (snapshot.items || []).map((item) => ({
+      id: item.id,
+      title: String(item.title || ""),
+      price: Number(item.price) || 0,
+      qty: Number(item.qty) || 0,
+    })),
     requestIds: requestId ? [requestId] : [],
   };
 
@@ -217,6 +225,7 @@ function saveOrderSnapshot(snapshot) {
         ...existing,
         ...nextOrder,
         title: existing.title || "ЗАКАЗ " + orderId,
+        mode: "normal",
         total: (Number(existing.total) || 0) + nextOrder.total,
         totalItems: (Number(existing.totalItems) || 0) + nextOrder.totalItems,
         items: mergeSavedOrderItems(existing.items || [], nextOrder.items),
@@ -4382,7 +4391,7 @@ if (pendingSheetData) {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register("./sw.js?v=94");
+    navigator.serviceWorker.register("./sw.js?v=95");
   });
 }
 

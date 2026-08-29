@@ -5,8 +5,8 @@
   const CHAT_DB_VERSION = 2;
   const CHAT_SEASON_KEY = "tomatoChatSeasonId";
   const CHAT_CONFIG_KEY = "tomatoChatSeasonConfig";
-  const CHAT_POLL_FAST_INTERVAL = 15000;
-  const CHAT_POLL_IDLE_INTERVAL = 45000;
+  const CHAT_POLL_FAST_INTERVAL = 3000;
+  const CHAT_POLL_IDLE_INTERVAL = 15000;
   const CHAT_POLL_FAST_WINDOW = 60000;
   const CHAT_PUSH_SNOOZE_KEY = "tomatoChatPushSnoozedUntil";
   const CHAT_PUSH_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -158,6 +158,12 @@ const CHAT_PAYMENT = {
   }
 
   async function ensureRealtimeOrder(order, access, forceLink = false) {
+    // Firestore is intentionally disabled until its server identity is
+    // configured. The durable Apps Script channel remains the source of truth
+    // and active-chat polling provides predictable delivery without a
+    // ten-second realtime timeout on every open.
+    return false;
+    /* istanbul ignore next */
     const bridge = realtimeBridge();
     if (!bridge || !state.config?.seasonId || !access?.chatToken) return false;
 
@@ -1597,6 +1603,13 @@ async function removeOutboxRequest(
       contactChannel: order.contactChannel === "max" || order.contactChannel === "chat"
         ? order.contactChannel
         : "",
+      initialMode: order.lastSubmissionMode === "addon" ? "addon" : "normal",
+      initialItems: order.lastSubmissionMode === "addon"
+        ? (order.lastSubmissionItems || [])
+        : [],
+      initialTotal: order.lastSubmissionMode === "addon"
+        ? Number(order.lastSubmissionTotal) || 0
+        : 0,
     }, 25000);
 
     await putAccess(
@@ -1643,6 +1656,13 @@ async function removeOutboxRequest(
   const orderKeyPart = orderId.replace(/[^0-9A-Za-z]/g, "");
   const now = Date.now();
   const summary = state.summaries.get(orderId) || {};
+  const isAddon = order.lastSubmissionMode === "addon";
+  const visibleItems = isAddon && Array.isArray(order.lastSubmissionItems)
+    ? order.lastSubmissionItems
+    : Array.isArray(order.items) ? order.items : [];
+  const visibleTotal = isAddon
+    ? Number(order.lastSubmissionTotal) || 0
+    : Number(order.total) || 0;
 
   const publicOrder = {
     seasonId,
@@ -1650,15 +1670,15 @@ async function removeOutboxRequest(
     name: order.name || "",
     pickup: order.pickup || "",
     createdAt: order.createdAt || new Date(now).toISOString(),
-    itemCount: Number(order.totalItems) || 0,
-    varietyCount: Array.isArray(order.items) ? order.items.length : 0,
-    total: Number(order.total) || 0,
+    itemCount: visibleItems.reduce((sum, item) => sum + (Number(item.qty) || 0), 0),
+    varietyCount: visibleItems.length,
+    total: visibleTotal,
     prepayment: Number(summary.prepayment) || 0,
     debt: Number(summary.debt) || Number(order.total) || 0,
     issued: summary.status === "issued",
     status: summary.status || "unpaid",
     statusLabel: summary.statusLabel || "НЕ ОПЛАЧЕН",
-    items: Array.isArray(order.items) ? order.items : [],
+    items: visibleItems,
   };
 
   const messageBase = `${seasonId}_${orderKeyPart}`;
@@ -1674,7 +1694,7 @@ if (order.contactChannel === "chat") {
       sender: "client",
       type: "text",
       text:
-        `${getChatGreeting()}! Направляю заказ по семенам томатов для подтверждения и оплаты 🍅`,
+        `${getChatGreeting()}! Направляю ${isAddon ? "дозаказ" : "заказ"} по семенам томатов для подтверждения и оплаты 🍅`,
       createdAt:
         new Date(now).toISOString(),
     },
@@ -1696,7 +1716,7 @@ if (order.contactChannel === "chat") {
       sender: "seller",
       type: "text",
       text:
-        `${getChatGreeting()}! 🌱 Спасибо за заказ.`,
+        `${getChatGreeting()}! 🌱 Спасибо за ${isAddon ? "дозаказ" : "заказ"}.`,
       createdAt:
         new Date(
           now + CHAT_SELLER_DELAY
@@ -2670,15 +2690,47 @@ return card;
     return new Promise((resolve) => canvas.toBlob(resolve, "image/webp", quality));
   }
 
-  async function prepareImageAttachment(file) {
-    let bitmap;
+  async function decodeChatImage(file) {
     try {
-      bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+      const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+      return {
+        source: bitmap,
+        width: bitmap.width,
+        height: bitmap.height,
+        close: () => bitmap.close?.(),
+      };
+    } catch (bitmapError) {
+      const objectUrl = URL.createObjectURL(file);
+      const image = new Image();
+      image.decoding = "async";
+      try {
+        await new Promise((resolve, reject) => {
+          image.onload = resolve;
+          image.onerror = () => reject(bitmapError || new Error("IMAGE_DECODE_FAILED"));
+          image.src = objectUrl;
+        });
+        return {
+          source: image,
+          width: image.naturalWidth,
+          height: image.naturalHeight,
+          close: () => URL.revokeObjectURL(objectUrl),
+        };
+      } catch (error) {
+        URL.revokeObjectURL(objectUrl);
+        throw error;
+      }
+    }
+  }
+
+  async function prepareImageAttachment(file) {
+    let decoded;
+    try {
+      decoded = await decodeChatImage(file);
     } catch {
       throw new Error("Не удалось открыть изображение. Для HEIC отправьте скриншот или сохраните файл как JPG/PNG.");
     }
-    let width = bitmap.width;
-    let height = bitmap.height;
+    let width = decoded.width;
+    let height = decoded.height;
     const maxSide = 1600;
     if (Math.max(width, height) > maxSide) {
       const ratio = maxSide / Math.max(width, height);
@@ -2694,7 +2746,7 @@ return card;
       canvas.height = height;
       context.fillStyle = "#ffffff";
       context.fillRect(0, 0, width, height);
-      context.drawImage(bitmap, 0, 0, width, height);
+      context.drawImage(decoded.source, 0, 0, width, height);
       blob = await canvasToWebp(canvas, quality);
       if (blob && blob.size <= CHAT_TARGET_IMAGE_BYTES) break;
       if (quality > 0.54) quality -= 0.08;
@@ -2703,7 +2755,7 @@ return card;
         height = Math.max(400, Math.round(height * 0.84));
       }
     }
-    bitmap.close?.();
+    decoded.close();
     if (!blob || blob.size > CHAT_ATTACHMENT_LIMIT) {
       throw new Error("Не удалось уменьшить изображение до 1 МБ.");
     }
@@ -2921,37 +2973,9 @@ function queuedDelivery(request) {
   }
 
   try {
-    const bridge = realtimeBridge();
-    // Текст идёт напрямую в Firestore независимо от того, успел ли
-    // onSnapshot уже прислать первый snapshot. Вложения остаются на Apps Script/Drive.
-    const useRealtime = !request.attachment && bridge;
-    let result;
-    if (useRealtime) {
-      try {
-        result = await bridge.sendText({
-          apiUrl: chatApiUrl(),
-          seasonId: state.config?.seasonId || "",
-          orderId: request.orderId,
-          chatToken: request.chatToken,
-          sender: "client",
-          text: request.text,
-          messageId: request.requestId,
-        });
-      } catch (realtimeError) {
-        // The request id is stable in both transports. If Firestore is down or
-        // its relay times out, Apps Script can safely accept the same text
-        // without creating a second message.
-        console.warn("Realtime-отправка недоступна, используем резерв", realtimeError);
-        state.realtimeReady.delete(orderKey(orderId));
-        result = await apiPost(request,30000);
-        startChatPolling();
-      }
-    } else {
-      // Загрузка чека проходит через Apps Script и Google Drive. На первом
-      // обращении Drive и при холодном старте 30 секунд недостаточно: браузер
-      // обрывал уже выполняющийся запрос и оставлял карточку в outbox.
-      result = await apiPost(request,request.attachment ? 90000 : 30000);
-    }
+    // Все сообщения идут через один надёжный Apps Script канал. Stable
+    // requestId сохраняет защиту от дублей при повторе или сетевом таймауте.
+    const result = await apiPost(request,request.attachment ? 90000 : 30000);
 
     let confirmedMessage =
       result.message;
