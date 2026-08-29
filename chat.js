@@ -668,6 +668,25 @@ const dbDelete = (store, key) =>
     ].join("|")}`;
   }
 
+  function paymentStatusEventKey(message) {
+    if (message?.sender !== "system" || message?.type !== "system") return "";
+    const text = String(message?.text || "").replace(/\s+/g, " ").trim();
+    const match = text.match(/оплата заказа\s+(#?[A-ZА-Я0-9._:-]+)\s+(подтверждена|отменена)/i);
+    if (!match) return "";
+    return `${match[1].replace(/^#/, "").toUpperCase()}|${match[2].toLowerCase()}`;
+  }
+
+  function dedupePaymentStatusEvents(messages) {
+    let previousPaymentEvent = "";
+    return messages.filter((message) => {
+      const event = paymentStatusEventKey(message);
+      if (!event) return true;
+      if (event === previousPaymentEvent) return false;
+      previousPaymentEvent = event;
+      return true;
+    });
+  }
+
   function chatMessageSignature(message) {
     const attachment = message?.attachment || {};
     return JSON.stringify([
@@ -1065,14 +1084,14 @@ async function removeOutboxRequest(
       incomingMessages.forEach(put);
     }
 
-    const messages = reconcileOptimisticMessages(Array.from(merged.values()).sort((left, right) => {
+    const messages = dedupePaymentStatusEvents(reconcileOptimisticMessages(Array.from(merged.values()).sort((left, right) => {
       const leftTime = new Date(left.createdAt || 0).getTime();
       const rightTime = new Date(right.createdAt || 0).getTime();
       const safeLeft = Number.isFinite(leftTime) ? leftTime : 0;
       const safeRight = Number.isFinite(rightTime) ? rightTime : 0;
       return safeLeft - safeRight
         || positions.get(chatMessageKey(left)) - positions.get(chatMessageKey(right));
-    }));
+    })));
 
     return {
       ...cached,
@@ -1368,6 +1387,23 @@ async function removeOutboxRequest(
     return ["paid", "debt", "issued"].includes(status) ? status : "unpaid";
   }
 
+  function effectiveOrderStatus(source) {
+    const status = String(source?.status || "unpaid");
+    if (status === "issued" || status === "paid") return status;
+    const prepayment = Number(source?.prepayment) || 0;
+    const debt = Number(source?.debt) || 0;
+    return prepayment > 0 && debt > 0 ? "debt" : status;
+  }
+
+  function effectiveOrderStatusLabel(source) {
+    const status = effectiveOrderStatus(source);
+    if (status === "debt") {
+      const debt = Number(source?.debt) || 0;
+      return `ТРЕБУЕТСЯ ДОПЛАТИТЬ ${debt.toLocaleString("ru-RU")}\u00A0₽`;
+    }
+    return source?.statusLabel || "НЕ ОПЛАЧЕНО";
+  }
+
   function formatChatTime(value) {
     const date = new Date(value || "");
     if (Number.isNaN(date.getTime())) return "";
@@ -1397,8 +1433,8 @@ async function removeOutboxRequest(
     const orderId = normalizeOrderId(order.orderId);
     const summary = state.summaries.get(orderId) || null;
     const status = card.querySelector(".saved-order-card-status") || document.createElement("strong");
-    status.className = `saved-order-card-status ${statusClass(summary?.status)}`;
-    status.textContent = summary?.statusLabel || "СТАТУС ОБНОВЛЯЕТСЯ";
+    status.className = `saved-order-card-status ${statusClass(effectiveOrderStatus(summary))}`;
+    status.textContent = summary ? effectiveOrderStatusLabel(summary) : "СТАТУС ОБНОВЛЯЕТСЯ";
     if (!card.contains(status)) card.appendChild(status);
 
     const chatButton = document.createElement("button");
@@ -1699,8 +1735,8 @@ async function removeOutboxRequest(
     prepayment: Number(summary.prepayment) || 0,
     debt: Number(summary.debt) || Number(order.total) || 0,
     issued: summary.status === "issued",
-    status: summary.status || "unpaid",
-    statusLabel: summary.statusLabel || "НЕ ОПЛАЧЕН",
+    status: effectiveOrderStatus(summary),
+    statusLabel: effectiveOrderStatusLabel(summary),
     items: visibleItems,
   };
 
@@ -2072,16 +2108,12 @@ async function resumeOutboxForCurrentChat() {
 
   elements.chatCustomer.textContent = order.name || "";
 
-  let statusLabel = order.statusLabel || "НЕ ОПЛАЧЕНО";
-
-  if (order.status === "debt") {
-    const debt = Number(order.debt) || 0;
-    statusLabel = `ДОПЛАТИТЬ ${debt.toLocaleString("ru-RU")}\u00A0₽`;
-  }
+  const status = effectiveOrderStatus(order);
+  const statusLabel = effectiveOrderStatusLabel(order);
 
   elements.chatStatus.textContent = statusLabel;
   elements.chatStatus.className =
-    `order-chat-status ${statusClass(order.status)}`;
+    `order-chat-status ${statusClass(status)}`;
 }
 
   function renderChatPayload(payload, scrollToEnd = false) {
@@ -3000,9 +3032,29 @@ function queuedDelivery(request) {
   }
 
   try {
-    // Все сообщения идут через один надёжный Apps Script канал. Stable
-    // requestId сохраняет защиту от дублей при повторе или сетевом таймауте.
-    const result = await apiPost(request,request.attachment ? 90000 : 30000);
+    // Текст сначала пишем прямо в Firestore: Пульт получает его немедленно.
+    // Firebase-мост тем же stable clientMessageId сохраняет запись в Apps Script;
+    // при любой ошибке остаётся прежний надёжный серверный канал.
+    const bridge = realtimeBridge();
+    let result;
+    if (!request.attachment && bridge?.sendText) {
+      try {
+        result = await bridge.sendText({
+          apiUrl: chatApiUrl(),
+          seasonId: state.config?.seasonId || "",
+          orderId: request.orderId,
+          chatToken: request.chatToken,
+          sender: "client",
+          text: request.text,
+          messageId: request.clientMessageId || request.requestId,
+        });
+      } catch (realtimeError) {
+        console.warn("Мгновенная отправка недоступна, использован серверный канал", realtimeError);
+        result = await apiPost(request, 30000);
+      }
+    } else {
+      result = await apiPost(request, request.attachment ? 90000 : 30000);
+    }
 
     let confirmedMessage =
       result.message;
