@@ -61,7 +61,9 @@ export function initFirebase() {
         firebaseApp = appSdk.getApps().find((app) => app.name === "[DEFAULT]")
           || appSdk.initializeApp(firebaseConfig);
         firebaseAuth = authSdk.getAuth(firebaseApp);
-        firestoreDb = firestoreSdk.getFirestore(firebaseApp);
+        firestoreDb = firestoreSdk.initializeFirestore(firebaseApp, {
+          experimentalForceLongPolling: true,
+        });
 
         return {
           app: firebaseApp,

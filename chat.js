@@ -1056,12 +1056,9 @@ async function removeOutboxRequest(
     };
 
     if (incoming?.messagesMode !== "delta") {
-      // Полная серверная история может на несколько секунд/десятков секунд
-      // отставать от только что подтверждённой записи. Пока не увидели серверное
-      // эхо, держим локальный ACK рядом с обычными pending/error сообщениями.
-      cachedMessages
-        .filter((message) => message.delivery || message.awaitingServerEcho)
-        .forEach(put);
+      // История чата append-only. Отстающий полный ответ Apps Script не должен
+      // стирать сообщение, которое уже пришло через Firebase.
+      cachedMessages.forEach(put);
       incomingMessages.forEach(put);
     } else {
       cachedMessages.forEach(put);
