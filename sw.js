@@ -1,4 +1,4 @@
-const SHELL_CACHE = "catalog-shell-v99";
+const SHELL_CACHE = "catalog-shell-v100";
 const IMAGE_CACHE = "catalog-images-v5";
 const SHELL_FILES = [
   "./",
@@ -52,11 +52,19 @@ async function cacheFirst(request, cacheName) {
   const cache = await caches.open(cacheName);
   const cached = await cache.match(request);
   if (cached) return cached;
-  const response = await fetch(request);
-  if (response.ok || response.type === "opaque") {
-    await cache.put(request, response.clone()).catch(() => undefined);
+  try {
+    const response = await fetch(request);
+    if (response.ok || response.type === "opaque") {
+      await cache.put(request, response.clone()).catch(() => undefined);
+    }
+    return response;
+  } catch {
+    // Недоступная внешняя картинка не должна ронять fetch-обработчик SW и
+    // создавать Uncaught (in promise) для каждого изображения в консоли.
+    const stale = await cache.match(request,{ignoreSearch:true});
+    if (stale) return stale;
+    return new Response(null,{status:504,statusText:"Image unavailable"});
   }
-  return response;
 }
 
 async function networkFirst(request) {
