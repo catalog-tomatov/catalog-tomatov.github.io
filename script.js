@@ -202,6 +202,7 @@ function saveOrderSnapshot(snapshot) {
       qty: Number(item.qty) || 0,
     })),
     lastSubmissionMode: snapshot.mode === "addon" ? "addon" : "normal",
+    lastSubmissionRequestId: requestId,
     lastSubmissionTotal: Number(snapshot.total) || 0,
     lastSubmissionItems: (snapshot.items || []).map((item) => ({
       id: item.id,
@@ -4391,7 +4392,7 @@ if (pendingSheetData) {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register("./sw.js?v=97");
+    navigator.serviceWorker.register("./sw.js?v=98");
   });
 }
 

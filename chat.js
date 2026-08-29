@@ -1553,11 +1553,42 @@ async function removeOutboxRequest(
     elements.chatError.hidden = !message;
   }
 
+  function latestSubmissionId(order) {
+    const requestIds = Array.isArray(order?.requestIds) ? order.requestIds : [];
+    return String(order?.lastSubmissionRequestId || requestIds[requestIds.length - 1] || "");
+  }
+
   async function ensureChatAccess(order) {
   let access =
     await getAccess(order.orderId);
 
   if (access?.chatToken) {
+    const submissionId = latestSubmissionId(order);
+    if (
+      order.contactChannel === "chat" &&
+      submissionId &&
+      access.activatedSubmissionId !== submissionId
+    ) {
+      const result = await apiPost({
+        action: "chat_activate",
+        orderId: order.orderId,
+        chatToken: access.chatToken,
+        submissionId,
+        clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        initialMode: order.lastSubmissionMode === "addon" ? "addon" : "normal",
+        initialItems: order.lastSubmissionMode === "addon"
+          ? (order.lastSubmissionItems || [])
+          : [],
+        initialTotal: order.lastSubmissionMode === "addon"
+          ? Number(order.lastSubmissionTotal) || 0
+          : 0,
+      }, 25000);
+      access = await putAccess(order.orderId, {
+        activatedSubmissionId: submissionId,
+        chatCreated: true,
+      });
+      return { ...access, initialPayload: result };
+    }
     return access;
   }
 
@@ -1612,6 +1643,9 @@ async function removeOutboxRequest(
         chatToken: result.chatToken,
         pendingCreateRequestId: "",
         chatCreated: true,
+        activatedSubmissionId: order.contactChannel === "chat"
+          ? latestSubmissionId(order)
+          : "",
       }
     );
 
@@ -1929,6 +1963,13 @@ async function resumeOutboxForCurrentChat() {
 
     let cached = state.current.payload || await readCachedChat(order.orderId);
     if (!state.current || normalizeOrderId(state.current.order?.orderId) !== normalizedOrderId) return;
+    // Пустой кэш после MAX не должен подавлять красивый старт нового
+    // внутреннего чата для только что созданного заказа или дозаказа.
+    if (
+      order.contactChannel === "chat" &&
+      cached &&
+      (!Array.isArray(cached.messages) || cached.messages.length === 0)
+    ) cached = null;
     cached = applyLatestKnownOrderStatus(cached, normalizedOrderId);
     if (cached && Array.isArray(cached.messages)) {
   // Старый уже существующий чат открываем сразу, но статус оплаты берём
