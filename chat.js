@@ -714,7 +714,13 @@ const dbDelete = (store, key) =>
     let previousPaymentEvent = "";
     return messages.filter((message) => {
       const event = paymentStatusEventKey(message);
-      if (!event) return true;
+      if (!event) {
+        // Дедуплицируем только действительно соседние одинаковые события.
+        // После изменения заказа/доплаты новое подтверждение оплаты — это
+        // отдельное законное событие, даже если текст совпадает с прежним.
+        previousPaymentEvent = "";
+        return true;
+      }
       if (event === previousPaymentEvent) return false;
       previousPaymentEvent = event;
       return true;
@@ -1300,20 +1306,30 @@ async function removeOutboxRequest(
     }
     localStorage.setItem(CHAT_SEASON_KEY, state.config.seasonId);
 
-    if (!state.config.seasonClosed) {
-      await refreshChatSummaries();
-      if (chatPushSupported() && Notification.permission === "granted") {
-        void syncChatPushSubscriptions().catch((error) => console.warn("Не удалось обновить Push-подписки", error));
-      }
-    }
+    // Push-click уже передаёт ?chat=<orderId>. Не заставляем пользователя ждать
+    // общий chat_summaries (его timeout до 30 секунд): сначала показываем чат из
+    // локального savedOrders/cache, а актуальные сводки догружаем параллельно.
     state.initialized = true;
     renderSavedOrdersSummary();
     const currentUrl = new URL(window.location.href);
     const requestedChatId = normalizeOrderId(currentUrl.searchParams.get("chat"));
-    if (requestedChatId && findSavedOrder(requestedChatId)) {
+    const requestedOrder = requestedChatId ? findSavedOrder(requestedChatId) : null;
+    if (requestedOrder) {
       currentUrl.searchParams.delete("chat");
       window.history.replaceState({}, "", `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
-      void openOrderChat(requestedChatId);
+      void openOrderChat(requestedChatId).catch((error) => {
+        console.warn("Не удалось сразу открыть чат из Push", error);
+      });
+    }
+
+    if (!state.config.seasonClosed) {
+      const summariesPromise = refreshChatSummaries();
+      if (!requestedOrder) await summariesPromise;
+      else void summariesPromise;
+
+      if (chatPushSupported() && Notification.permission === "granted") {
+        void syncChatPushSubscriptions().catch((error) => console.warn("Не удалось обновить Push-подписки", error));
+      }
     }
   }
 
@@ -3537,8 +3553,38 @@ function queuedDelivery(request) {
   });
   navigator.serviceWorker?.addEventListener("message", (event) => {
     const payload = event.data || {};
-    if (payload.type !== "catalog-chat-message") return;
     const orderId = normalizeOrderId(payload.orderId);
+
+    // Эта команда приходит ТОЛЬКО после клика по системному Push.
+    // Сам приход уведомления использует catalog-chat-message и не должен
+    // самовольно уводить пользователя из текущего экрана.
+    if (payload.type === "catalog-open-chat") {
+      if (!orderId) return;
+
+      if (!state.initialized) {
+        // Инициализация ещё идёт: сохраняем намерение в URL без перезагрузки.
+        // initializeOrderChatClient() подхватит его, как только config готов.
+        const currentUrl = new URL(window.location.href);
+        currentUrl.searchParams.set("chat", orderId);
+        window.history.replaceState({}, "", `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
+        return;
+      }
+
+      if (findSavedOrder(orderId)) {
+        void openOrderChat(orderId).catch((error) => {
+          console.warn("Не удалось открыть чат после клика Push", error);
+        });
+      } else {
+        // Редкая страховка: локальный список ещё не успел восстановиться.
+        void refreshChatSummaries().then(() => {
+          if (findSavedOrder(orderId)) return openOrderChat(orderId);
+          return null;
+        }).catch((error) => console.warn("Не удалось восстановить чат из Push", error));
+      }
+      return;
+    }
+
+    if (payload.type !== "catalog-chat-message") return;
     if (orderId) preloadOrderChat(orderId);
     if (state.current && normalizeOrderId(state.current.order?.orderId) === orderId) {
       activateChatPolling(true);

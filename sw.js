@@ -1,52 +1,19 @@
-const SHELL_CACHE = "catalog-shell-v111";
+const SHELL_CACHE = "catalog-shell-v95";
 const IMAGE_CACHE = "catalog-images-v5";
-const BADGE_COUNTER_URL = "./__catalog_badge_counter__";
 const SHELL_FILES = [
   "./",
   "./index.html",
   "./style.css?v=59",
-  "./script.js?v=76",
-  "./chat.js?v=47",
+  "./script.js?v=71",
+  "./chat.js?v=32",
   "./firebase-config.js?v=1",
-  "./firebase-client.js?v=9",
+  "./firebase-client.js?v=5",
   "./manifest.json",
   "./chat-icon.png",
   "./max-icon.png",
   "./vendor/canvas-confetti-1.9.3.min.js",
   "./vendor/html2canvas-1.4.1.min.js",
 ];
-
-async function readBadgeCount() {
-  const cache = await caches.open(SHELL_CACHE);
-  const response = await cache.match(BADGE_COUNTER_URL);
-  return Math.max(Number(await response?.text()) || 0, 0);
-}
-
-async function writeBadgeCount(rawCount) {
-  const count = Math.max(0, Math.min(Math.trunc(Number(rawCount)) || 0, 999));
-  const cache = await caches.open(SHELL_CACHE);
-  await cache.put(
-    BADGE_COUNTER_URL,
-    new Response(String(count), {
-      headers: { "Content-Type": "text/plain", "Cache-Control": "no-store" },
-    }),
-  );
-  try {
-    if (count && typeof self.navigator.setAppBadge === "function") {
-      await self.navigator.setAppBadge(count);
-    } else if (!count && typeof self.navigator.clearAppBadge === "function") {
-      await self.navigator.clearAppBadge();
-    }
-  } catch {
-    // Badge API поддерживается не на всех устройствах.
-  }
-  return count;
-}
-
-self.addEventListener("message", (event) => {
-  if (event.data?.type !== "catalog-badge-sync") return;
-  event.waitUntil(writeBadgeCount(event.data.count));
-});
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -85,19 +52,11 @@ async function cacheFirst(request, cacheName) {
   const cache = await caches.open(cacheName);
   const cached = await cache.match(request);
   if (cached) return cached;
-  try {
-    const response = await fetch(request);
-    if (response.ok || response.type === "opaque") {
-      await cache.put(request, response.clone()).catch(() => undefined);
-    }
-    return response;
-  } catch {
-    // Недоступная внешняя картинка не должна ронять fetch-обработчик SW и
-    // создавать Uncaught (in promise) для каждого изображения в консоли.
-    const stale = await cache.match(request,{ignoreSearch:true});
-    if (stale) return stale;
-    return new Response(null,{status:504,statusText:"Image unavailable"});
+  const response = await fetch(request);
+  if (response.ok || response.type === "opaque") {
+    await cache.put(request, response.clone()).catch(() => undefined);
   }
+  return response;
 }
 
 async function networkFirst(request) {
@@ -173,7 +132,6 @@ self.addEventListener("push", (event) => {
           messageId: String(payload.messageId || ""),
         }),
       );
-      await readBadgeCount().then((count) => writeBadgeCount(count + 1));
       // Показываем системное уведомление всегда. На iPhone свёрнутая PWA
       // иногда ещё считается `visible`, из-за чего прежняя проверка
       // ошибочно проглатывала push.
@@ -201,14 +159,27 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const orderId = String(event.notification.data?.orderId || "");
   const target = orderId ? `./?chat=${encodeURIComponent(orderId)}` : "./";
+
   event.waitUntil(
     self.clients
       .matchAll({ type: "window", includeUncontrolled: true })
       .then(async (windows) => {
+        // Если Каталог уже открыт, не перезагружаем его. Сначала возвращаем
+        // существующее окно на экран, затем отдельной командой открываем чат.
         for (const client of windows) {
-          if ("navigate" in client) await client.navigate(target);
-          return client.focus();
+          if (!String(client.url || "").startsWith(self.registration.scope)) continue;
+          const focused = await client.focus();
+          if (orderId) {
+            client.postMessage({
+              type: "catalog-open-chat",
+              orderId,
+            });
+          }
+          return focused;
         }
+
+        // Если PWA/вкладка закрыта, URL сам несёт номер заказа. chat.js увидит
+        // ?chat=... при запуске и откроет чат до долгого refreshChatSummaries().
         return self.clients.openWindow(target);
       }),
   );
