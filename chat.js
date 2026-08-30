@@ -1413,6 +1413,14 @@ async function removeOutboxRequest(
     try {
       if (unread && navigator.setAppBadge) navigator.setAppBadge(unread);
       else if (!unread && navigator.clearAppBadge) navigator.clearAppBadge();
+      const payload = { type: "catalog-badge-sync", count: unread };
+      if (navigator.serviceWorker?.controller) {
+        navigator.serviceWorker.controller.postMessage(payload);
+      } else if ("serviceWorker" in navigator) {
+        void navigator.serviceWorker.ready.then((registration) => {
+          registration.active?.postMessage(payload);
+        });
+      }
     } catch (error) {
       console.warn("Badge PWA недоступен", error);
     }
