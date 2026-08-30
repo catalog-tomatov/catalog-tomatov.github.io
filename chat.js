@@ -206,6 +206,11 @@ const CHAT_PAYMENT = {
         let payload = mergeChatPayload(memory, incoming);
         payload.summary = suppressReadSummary(normalized, payload.summary);
 
+        // Событие оплаты создаёт только авторизованный продавец. Оно содержит
+        // уже подтверждённое Пультом значение, поэтому карточка меняется в том
+        // же realtime-снимке, без ожидания резервного chat_summaries.
+        applyRealtimePaymentStatus(normalized, incoming?.messages);
+
         // Первый Firestore-снимок может быть старым. Но следующий документ от
         // Apps Script с более новым updatedAtIso создан уже после записи Sheets
         // и поэтому применяется сразу; chat_summaries остаётся страховкой.
@@ -798,6 +803,36 @@ const dbDelete = (store, key) =>
       order: payload.order ? { ...payload.order, ...patch } : payload.order,
       summary: payload.summary ? { ...payload.summary, ...patch } : { ...latest },
     };
+  }
+
+  function applyRealtimePaymentStatus(orderIdValue, messages) {
+    const orderId = normalizeOrderId(orderIdValue);
+    if (!orderId || !Array.isArray(messages)) return;
+    const payment = [...messages].reverse().find((message) => (
+      message?.eventKind === "payment_status"
+      && message?.source === "pult_payment"
+      && ["paid", "unpaid"].includes(message?.paymentStatus)
+    ));
+    if (!payment) return;
+    const current = state.authoritativeOrders.get(orderId) || {};
+    const total = Math.max(Number(payment.total) || Number(current.total) || 0, 0);
+    const paidAmount = payment.paymentStatus === "paid"
+      ? Math.max(Number(payment.paidAmount) || total, 0)
+      : 0;
+    const patch = {
+      status: payment.paymentStatus,
+      statusLabel: payment.paymentStatus === "paid" ? "Оплачено" : "Не оплачено",
+      prepayment: paidAmount,
+      debt: Math.max(total - paidAmount, 0),
+      total,
+      issued: false,
+    };
+    rememberAuthoritativeOrderState(
+      orderId,
+      patch,
+      patch,
+      Date.parse(payment.createdAt || "") || Date.now(),
+    );
   }
 
   function orderStatusSignature(source) {
@@ -2737,12 +2772,12 @@ return card;
   }
 
   async function fileToBase64(blob) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
-      reader.onerror = () => reject(reader.error || new Error("Не удалось прочитать файл"));
-      reader.readAsDataURL(blob);
-    });
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let binary = "";
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+    }
+    return btoa(binary);
   }
 
   async function canvasToWebp(canvas, quality) {
@@ -2782,6 +2817,17 @@ return card;
   }
 
   async function prepareImageAttachment(file) {
+    if (
+      file.size <= CHAT_ATTACHMENT_LIMIT
+      && /^(image\/(?:jpeg|png|webp))$/i.test(file.type)
+    ) {
+      return {
+        mime: file.type.toLowerCase(),
+        fileName: file.name || "Изображение",
+        sizeBytes: file.size,
+        base64: await fileToBase64(file),
+      };
+    }
     let decoded;
     try {
       decoded = await decodeChatImage(file);
@@ -3037,6 +3083,7 @@ function queuedDelivery(request) {
     // при любой ошибке остаётся прежний надёжный серверный канал.
     const bridge = realtimeBridge();
     let result;
+    let relayAcknowledged = null;
     if (!request.attachment && bridge?.sendText) {
       try {
         result = await bridge.sendText({
@@ -3048,6 +3095,7 @@ function queuedDelivery(request) {
           text: request.text,
           messageId: request.clientMessageId || request.requestId,
         });
+        relayAcknowledged = result.relayAcknowledged || null;
       } catch (realtimeError) {
         console.warn("Мгновенная отправка недоступна, использован серверный канал", realtimeError);
         result = await apiPost(request, 30000);
@@ -3216,6 +3264,14 @@ function queuedDelivery(request) {
 
     // Удаляем outbox только после подтверждения сервера
     // и сохранения подтверждённого сообщения локально.
+    if (confirmedPersisted && relayAcknowledged) {
+      try {
+        await relayAcknowledged;
+      } catch (relayError) {
+        confirmedPersisted = false;
+        console.warn("Сообщение доставлено через Firebase; архив будет повторён из outbox", relayError);
+      }
+    }
     if (confirmedPersisted) {
       try {
         await removeOutboxRequest(

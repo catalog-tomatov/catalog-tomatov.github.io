@@ -62,7 +62,7 @@ export function initFirebase() {
           || appSdk.initializeApp(firebaseConfig);
         firebaseAuth = authSdk.getAuth(firebaseApp);
         firestoreDb = firestoreSdk.initializeFirestore(firebaseApp, {
-          experimentalForceLongPolling: true,
+          experimentalAutoDetectLongPolling: true,
         });
 
         return {
@@ -224,6 +224,12 @@ function realtimeMessage(documentSnapshot) {
     snapshot: data.snapshot || null,
     clientMessageId: String(data.clientMessageId || ""),
     createdAt: firestoreDate(data.createdAt, data.createdAtIso),
+    eventKind: String(data.eventKind || ""),
+    paymentStatus: String(data.paymentStatus || ""),
+    paidAmount: Number(data.paidAmount) || 0,
+    total: Number(data.total) || 0,
+    revision: String(data.revision || data.clientMessageId || ""),
+    source: String(data.source || ""),
   };
 }
 
@@ -388,14 +394,15 @@ export async function sendRealtimeText({ apiUrl, seasonId, orderId, chatToken, s
     }
   }
 
-  const firebaseIdToken = await user.getIdToken();
-  await postJson(apiUrl, {
+  // Firestore уже принял сообщение, поэтому второй участник не ждёт медленную
+  // запись архива Apps Script. Outbox очистится после отдельного relay.
+  const relayAcknowledged = user.getIdToken().then((firebaseIdToken) => postJson(apiUrl, {
     action: sender === "seller" ? "chat_firestore_seller_notify" : "chat_firestore_notify",
     orderId,
     chatToken,
     messageId: safeMessageId,
     firebaseIdToken,
-  }, 30000);
+  }, 30000));
 
   return {
     success: true,
@@ -404,6 +411,7 @@ export async function sendRealtimeText({ apiUrl, seasonId, orderId, chatToken, s
       createdAt: createdAtIso,
       orderId,
     },
+    relayAcknowledged,
   };
 }
 
