@@ -222,6 +222,7 @@ const CHAT_PAYMENT = {
 
         // Перед любым render возвращаем статус/суммы из source of truth.
         payload = applyLatestKnownOrderStatus(payload, normalized);
+        updateSavedOrderFromSnapshot(normalized, payload.order, linkedSeasonId);
         state.realtimeReady.add(key);
         state.pollFailures = 0;
         state.summaries.set(normalized, payload.summary);
@@ -292,6 +293,34 @@ const CHAT_PAYMENT = {
   function findSavedOrder(orderId) {
     const normalized = normalizeOrderId(orderId);
     return savedOrders.find((order) => normalizeOrderId(order.orderId) === normalized) || null;
+  }
+
+  function updateSavedOrderFromSnapshot(orderIdValue, order, seasonId = "") {
+    const saved = findSavedOrder(orderIdValue);
+    if (!saved || !order) return false;
+
+    const nextItems = Array.isArray(order.items)
+      ? order.items.map((product) => ({
+        id: product.id,
+        title: product.title,
+        price: Number(product.price) || 0,
+        qty: Number(product.qty) || 0,
+      }))
+      : saved.items;
+    const nextTotal = Number(order.total) || 0;
+    const nextTotalItems = Number(order.itemCount) || 0;
+    const changed =
+      Number(saved.total) !== nextTotal ||
+      Number(saved.totalItems) !== nextTotalItems ||
+      JSON.stringify(saved.items || []) !== JSON.stringify(nextItems || []);
+
+    saved.schemaVersion = 2;
+    if (seasonId) saved.seasonId = seasonId;
+    saved.total = nextTotal;
+    saved.totalItems = nextTotalItems;
+    saved.items = nextItems;
+    if (changed) persistSavedOrders();
+    return changed;
   }
 
   function openDb() {
@@ -1328,23 +1357,8 @@ async function removeOutboxRequest(
         item.summary = authoritativePayload.summary;
         state.summaries.set(key, item.summary);
 
-        const saved = findSavedOrder(key);
-        if (saved && item.order) {
-          saved.schemaVersion = 2;
-          saved.seasonId = result.seasonId;
-          saved.total = Number(item.order.total) || 0;
-          saved.totalItems = Number(item.order.itemCount) || 0;
-          saved.items = Array.isArray(item.order.items)
-            ? item.order.items.map((product) => ({
-              id: product.id,
-              title: product.title,
-              price: Number(product.price) || 0,
-              qty: Number(product.qty) || 0,
-            }))
-            : saved.items;
-        }
+        updateSavedOrderFromSnapshot(key, item.order, result.seasonId);
       });
-      persistSavedOrders();
       const changedOrderIds = [];
       await Promise.all(result.summaries.map(async (item) => {
         const itemOrderId = item.order?.orderId || item.summary?.orderId;
@@ -1432,10 +1446,13 @@ async function removeOutboxRequest(
 
   function effectiveOrderStatus(source) {
     const status = String(source?.status || "unpaid");
-    if (status === "issued" || status === "paid") return status;
+    if (status === "issued") return status;
     const prepayment = Number(source?.prepayment) || 0;
     const debt = Number(source?.debt) || 0;
-    return prepayment > 0 && debt > 0 ? "debt" : status;
+    // После изменения уже оплаченного заказа поле status может ещё быть paid,
+    // но новый total и debt уже актуальны. Остаток долга имеет приоритет.
+    if (prepayment > 0 && debt > 0) return "debt";
+    return status;
   }
 
   function effectiveOrderStatusLabel(source) {
