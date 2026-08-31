@@ -210,6 +210,7 @@ const CHAT_PAYMENT = {
         // уже подтверждённое Пультом значение, поэтому карточка меняется в том
         // же realtime-снимке, без ожидания резервного chat_summaries.
         applyRealtimePaymentStatus(normalized, incoming?.messages);
+        applyTrustedChatOrderSnapshots(normalized, incoming?.messages);
 
         // Первый Firestore-снимок может быть старым. Но следующий документ от
         // Apps Script с более новым updatedAtIso создан уже после записи Sheets
@@ -870,6 +871,63 @@ const dbDelete = (store, key) =>
     );
   }
 
+  function applyTrustedChatOrderSnapshots(orderIdValue, messages) {
+    const orderId = normalizeOrderId(orderIdValue);
+    if (!orderId || !Array.isArray(messages)) return;
+
+    // После ручного изменения заказа Apps Script добавляет системную карточку
+    // с уже пересчитанными total/prepayment/debt. Это тот же подтверждённый
+    // Sheets-снимок, который видит открытый чат, поэтому статус превью должен
+    // обновиться вместе с сообщением, не ожидая отдельного chat_summaries.
+    messages
+      .filter((message) => (
+        message?.sender === "system"
+        && message?.type === "order_card"
+        && message?.snapshot
+        && ["unpaid", "debt", "paid", "issued"].includes(String(message.snapshot.status || ""))
+      ))
+      .sort((left, right) => (
+        (Date.parse(left?.createdAt || "") || 0)
+        - (Date.parse(right?.createdAt || "") || 0)
+      ))
+      .forEach((message) => {
+        const snapshot = message.snapshot;
+        rememberAuthoritativeOrderState(
+          orderId,
+          snapshot,
+          snapshot,
+          Date.parse(message.createdAt || "") || Date.now(),
+        );
+      });
+  }
+
+  function commitChatSummary(orderIdValue, payload) {
+    const orderId = normalizeOrderId(orderIdValue);
+    if (!orderId || !payload?.summary) return;
+
+    const previous = state.summaries.get(orderId) || {};
+    const incoming = suppressReadSummary(orderId, payload.summary);
+    const previousAt = Date.parse(previous.lastAt || "") || 0;
+    const incomingAt = Date.parse(incoming.lastAt || "") || 0;
+    const next = { ...previous, ...incoming };
+
+    // Медленный ответ не имеет права вернуть старый текст превью поверх уже
+    // полученного realtime-сообщения.
+    if (previousAt > incomingAt) {
+      next.lastAt = previous.lastAt;
+      next.lastMessage = previous.lastMessage;
+    }
+
+    const corrected = applyLatestKnownOrderStatus({ summary: next }, orderId);
+    state.summaries.set(orderId, corrected.summary);
+    payload.summary = corrected.summary;
+    updateAppBadge();
+    renderSavedOrdersSummary();
+    if (document.getElementById("savedOrdersModal")?.style.display === "flex") {
+      renderSavedOrdersList();
+    }
+  }
+
   function orderStatusSignature(source) {
     if (!source) return "";
     return JSON.stringify([
@@ -1186,14 +1244,17 @@ async function removeOutboxRequest(
       const cached = entry?.payload || await readCachedChat(normalized);
       const incoming = await fetchChatHistory(order, access, lastServerMessageId(cached));
 
-      // ВАЖНО: chat_history НЕ меняет authoritative-статус оплаты.
-      // Источник истины для статуса — только chat_summaries (Google Sheets).
-      // history/realtime используются для сообщений и могут содержать устаревшую копию статуса.
+      // Системная order_card создаётся Apps Script из свежего Sheets-снимка.
+      // Применяем её вместе с delta-историей, чтобы карточка сохранённого заказа
+      // не оставалась «ОПЛАЧЕНО», когда в чате уже видна требуемая доплата.
+      applyRealtimePaymentStatus(normalized, incoming?.messages);
+      applyTrustedChatOrderSnapshots(normalized, incoming?.messages);
 
       const latest = state.chatCache.get(key)?.payload || await readCachedChat(normalized) || cached;
       let payload = mergeChatPayload(latest, incoming);
       payload.summary = suppressReadSummary(normalized, payload.summary);
       payload = applyLatestKnownOrderStatus(payload, normalized);
+      commitChatSummary(normalized, payload);
       access.initialPayload = null;
       await cacheChat(normalized, payload);
       return payload;
