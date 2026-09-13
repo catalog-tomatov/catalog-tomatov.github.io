@@ -14,9 +14,14 @@ const CATALOG_CACHE_TTL = 60 * 1000;
 const CATALOG_VISIBLE_REFRESH_INTERVAL = 60 * 1000;
 const CATALOG_AVAILABILITY_REFRESH_INTERVAL = 10 * 1000;
 const CATALOG_REQUEST_TIMEOUT = 30 * 1000;
+const CATALOG_AVAILABILITY_REQUEST_TIMEOUT = 6500;
 const CATALOG_RESUME_REFRESH_AFTER = 0;
-const ORDER_SUBMIT_REQUEST_TIMEOUT = 25 * 1000;
-const ADDON_SUBMIT_REQUEST_TIMEOUT = 45 * 1000;
+// The Apps Script stores the idempotent receipt before it starts the slower
+// chat/Firestore relay.  Stop waiting for that relay after 12 seconds and ask
+// for the same clientRequestId again: the retry returns the stored receipt and
+// can never create a second order or add-on.
+const ORDER_SUBMIT_REQUEST_TIMEOUT = 12 * 1000;
+const ADDON_SUBMIT_REQUEST_TIMEOUT = 12 * 1000;
 const ORDER_RECOVERY_REQUEST_TIMEOUT = 30 * 1000;
 
 let catalogReady = false;
@@ -851,7 +856,7 @@ async function refreshCatalogAvailabilityInBackground() {
     const data = await fetchJsonWithTimeout(
       url,
       { cache: "no-store" },
-      CATALOG_REQUEST_TIMEOUT,
+      CATALOG_AVAILABILITY_REQUEST_TIMEOUT,
     );
 
     if (isSeasonClosedResponse(data)) {
@@ -878,7 +883,17 @@ async function refreshCatalogAvailabilityInBackground() {
     });
   })()
     .catch((error) => {
-      console.warn("Доступность сортов не обновилась", error);
+      // Этот короткий запрос лишь ускоряет фоновое обновление. Google Apps
+      // Script иногда отвечает 404 после долгого редиректа или не укладывается
+      // в срок. В таком случае оставляем уже подтверждённые данные: основной
+      // минутный refresh продолжает работать и не засоряем консоль ожидаемой
+      // сетевой ошибкой.
+      if (
+        error?.code !== "REQUEST_TIMEOUT" &&
+        !/^HTTP (404|429|5\d\d)$/.test(String(error?.message || ""))
+      ) {
+        console.warn("Доступность сортов не обновилась", error);
+      }
       return null;
     })
     .finally(() => {

@@ -329,7 +329,36 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
       emit();
     }, fail),
   ];
-  return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
+  let pollInFlight = false;
+  const pollFromServer = async () => {
+    if (pollInFlight) return;
+    pollInFlight = true;
+    try {
+      const [orderSnapshot, messageSnapshot] = await Promise.all([
+        firestoreSdk.getDoc(orderRef),
+        firestoreSdk.getDocs(messagesQuery),
+      ]);
+      if (!orderSnapshot.metadata.fromCache) {
+        orderData = orderSnapshot.exists() ? orderSnapshot.data() : null;
+        orderFromCache = false;
+      }
+      if (!messageSnapshot.metadata.fromCache) {
+        messages = messageSnapshot.docs.map(realtimeMessage);
+      }
+      emit();
+    } catch {
+      // onSnapshot остаётся основным каналом; опрос нужен только для сетей,
+      // которые закрывают Firestore Listen, но пропускают обычные чтения.
+    } finally {
+      pollInFlight = false;
+    }
+  };
+  void pollFromServer();
+  const pollTimer = window.setInterval(() => void pollFromServer(), 1200);
+  return () => {
+    window.clearInterval(pollTimer);
+    unsubscribers.forEach((unsubscribe) => unsubscribe());
+  };
 }
 
 export async function sendRealtimeText({ apiUrl, seasonId, orderId, chatToken, sender, text, messageId }) {
