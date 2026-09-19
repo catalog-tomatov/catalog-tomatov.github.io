@@ -5900,18 +5900,18 @@ input:focus-visible,
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  transform: translateY(10px) scale(0.92);
+  transform: none;
   transition:
-    opacity 0.18s ease,
-    transform 0.2s ease,
-    visibility 0.2s;
+    opacity 0.16s ease,
+    visibility 0.16s;
+  will-change: opacity;
 }
 
 .back-to-top.visible {
   opacity: 0.92;
   visibility: visible;
   pointer-events: auto;
-  transform: translateY(0) scale(1);
+  transform: none;
 }
 
 .order-submit-error {
