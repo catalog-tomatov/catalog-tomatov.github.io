@@ -7143,27 +7143,24 @@ button:disabled,
   justify-content: center;
   width: min(100%, 430px);
   margin: 0 auto;
-  padding: 3px 12px max(7px, env(safe-area-inset-bottom));
-  color: #a99f98;
-  font-size: 9px;
+  padding: 2px 12px max(6px, env(safe-area-inset-bottom));
   text-align: center;
 }
 
-.legal-links a {
+.legal-links .legal-footnote,
+.legal-links .legal-footnote:visited,
+.legal-links .legal-footnote:hover,
+.legal-links .legal-footnote:focus-visible {
   display: inline-flex;
   align-items: center;
-  min-height: 18px;
-  padding: 1px 4px;
-  color: inherit;
-  text-decoration: none;
-  letter-spacing: 0.01em;
-  opacity: 0.48;
-  transition: color 160ms ease, opacity 160ms ease;
-}
-
-.legal-links a:hover,
-.legal-links a:focus-visible {
-  color: #746860;
-  text-decoration: none;
-  opacity: 0.9;
+  min-height: 14px;
+  padding: 0 3px;
+  color: #b8b3af !important;
+  font-size: 8px !important;
+  font-weight: 400 !important;
+  line-height: 1 !important;
+  letter-spacing: 0.015em;
+  text-decoration: none !important;
+  white-space: nowrap;
+  opacity: 0.68;
 }
