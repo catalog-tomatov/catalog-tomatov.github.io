@@ -7137,3 +7137,21 @@ button:disabled,
 .chat-image-status.error {
   color: #b52110;
 }
+
+.legal-links {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  width: min(100%, 430px);
+  margin: 0 auto;
+  padding: 18px 16px 28px;
+  color: #786b61;
+  font-size: 12px;
+  text-align: center;
+}
+
+.legal-links a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
