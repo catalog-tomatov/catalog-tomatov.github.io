@@ -7141,7 +7141,7 @@ button:disabled,
 }
 
 .legal-links {
-  display: flex;
+  display: none;
   justify-content: center;
   box-sizing: border-box;
   width: 100%;
@@ -7155,6 +7155,7 @@ button:disabled,
 .legal-links .legal-footnote:visited,
 .legal-links .legal-footnote:hover,
 .legal-links .legal-footnote:focus-visible {
+  
   display: inline-flex;
   align-items: center;
   min-height: 14px;
