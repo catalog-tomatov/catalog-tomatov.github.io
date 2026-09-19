@@ -36,13 +36,47 @@ const ORDER_DRAFT_KEY = "tomatoOrderDraft";
 const PENDING_ORDER_REQUEST_KEY = "tomatoPendingOrderRequest";
 const CART_REMOVALS_KEY = "tomatoCartRemovalsV1";
 let rejectedOrderItems = [];
-const RESET_VERSION_KEY = "tomatoResetVersion";
-const RESET_DATE = new Date("2027-06-01T00:00:00+03:00").getTime();
-const RESET_VERSION = "2027-06-01";
+const RESET_VERSIONS_KEY = "tomatoAppliedResetVersionsV2";
+const LEGACY_RESET_VERSION_KEY = "tomatoResetVersion";
+const STORAGE_RESET_SCHEDULE = [
+  {
+    version: "2026-season-start",
+    date: new Date("2026-09-19T00:00:00+03:00").getTime(),
+  },
+  {
+    version: "2027-06-01",
+    date: new Date("2027-06-01T00:00:00+03:00").getTime(),
+  },
+];
+
+function readAppliedResetVersions() {
+  const applied = new Set();
+
+  try {
+    const saved = JSON.parse(localStorage.getItem(RESET_VERSIONS_KEY) || "[]");
+    if (Array.isArray(saved)) saved.forEach((version) => applied.add(String(version)));
+  } catch (error) {
+    localStorage.removeItem(RESET_VERSIONS_KEY);
+  }
+
+  const legacyVersion = localStorage.getItem(LEGACY_RESET_VERSION_KEY);
+  if (legacyVersion) applied.add(legacyVersion);
+  return applied;
+}
 
 function runScheduledStorageReset(now = Date.now()) {
-  if (now < RESET_DATE) return false;
-  if (localStorage.getItem(RESET_VERSION_KEY) === RESET_VERSION) return false;
+  const applied = readAppliedResetVersions();
+  const due = STORAGE_RESET_SCHEDULE.filter(
+    (reset) => now >= reset.date && !applied.has(reset.version),
+  );
+  if (!due.length) return false;
+
+  due.forEach((reset) => applied.add(reset.version));
+  try {
+    localStorage.setItem(RESET_VERSIONS_KEY, JSON.stringify(Array.from(applied)));
+  } catch (error) {
+    return false;
+  }
 
   [
     SAVED_ORDERS_KEY,
@@ -51,9 +85,8 @@ function runScheduledStorageReset(now = Date.now()) {
     "pendingSheet",
     PENDING_ORDER_REQUEST_KEY,
     CART_REMOVALS_KEY,
+    LEGACY_RESET_VERSION_KEY,
   ].forEach((key) => localStorage.removeItem(key));
-
-  localStorage.setItem(RESET_VERSION_KEY, RESET_VERSION);
 
   if ("caches" in window) {
     void caches.delete("order-png-v1");
@@ -4598,7 +4631,7 @@ if (pendingSheetData) {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register("./sw.js?v=119");
+    navigator.serviceWorker.register("./sw.js?v=122");
   });
 }
 
