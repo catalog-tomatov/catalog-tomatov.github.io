@@ -2474,11 +2474,45 @@ function downloadOrderPng(file) {
   setTimeout(() => URL.revokeObjectURL(url), 3000);
 }
 
+let orderShareInProgress = false;
+
+function setOrderShareInProgress_(value) {
+  orderShareInProgress = Boolean(value);
+  const button = document.getElementById("saveBtn");
+  if (!button) return;
+
+  button.setAttribute("aria-disabled", String(orderShareInProgress));
+  if (orderShareInProgress) {
+    button.setAttribute("aria-busy", "true");
+    button.style.pointerEvents = "none";
+  } else {
+    button.removeAttribute("aria-busy");
+    button.style.pointerEvents = "";
+  }
+}
+
+function restorePendingSheetAfterCancelledShare_(pendingSheetBackup) {
+  if (!pendingSheetBackup || localStorage.getItem("pendingSheet")) return;
+  localStorage.setItem("pendingSheet", pendingSheetBackup);
+}
+
 async function shareOrderCardToMax_() {
+  // Защита от двойного тапа, пока системное окно MAX открывается или закрывается.
+  if (orderShareInProgress) return;
+
   if (!generatedFile) {
     showToast("⏳ Карточка ещё создаётся");
     return;
   }
+
+  setOrderShareInProgress_(true);
+
+  // Сначала помечаем карточку завершённой, затем передаём управление MAX.
+  // Мобильный браузер может быть приостановлен сразу после navigator.share(),
+  // поэтому очистка только после await оставляла окно для повторной отправки.
+  const pendingSheetBackup = localStorage.getItem("pendingSheet");
+  localStorage.removeItem("pendingSheet");
+  let shareCompleted = false;
 
   const hour = new Date().getHours();
   let greeting;
@@ -2509,19 +2543,28 @@ async function shareOrderCardToMax_() {
       downloadOrderPng(generatedFile);
     }
 
-    localStorage.removeItem("pendingSheet");
+    shareCompleted = true;
     setTimeout(() => location.reload(), 300);
   } catch (error) {
-    if (error && error.name === "AbortError") return;
+    if (error && error.name === "AbortError") {
+      restorePendingSheetAfterCancelledShare_(pendingSheetBackup);
+      return;
+    }
 
     console.warn("Системная отправка недоступна, сохраняем PNG", error);
     try {
       downloadOrderPng(generatedFile);
-      localStorage.removeItem("pendingSheet");
+      shareCompleted = true;
+      setTimeout(() => location.reload(), 300);
     } catch (downloadError) {
+      restorePendingSheetAfterCancelledShare_(pendingSheetBackup);
       console.error("Не удалось отправить карточку", downloadError);
       showToast("Не удалось открыть карточку для отправки");
     }
+  } finally {
+    // После успешной передачи оставляем защиту до перезагрузки страницы.
+    // При отмене или ошибке пользователь может безопасно попробовать ещё раз.
+    if (!shareCompleted) setOrderShareInProgress_(false);
   }
 }
 
@@ -4631,7 +4674,7 @@ if (pendingSheetData) {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register("./sw.js?v=122");
+    navigator.serviceWorker.register("./sw.js?v=125");
   });
 }
 
