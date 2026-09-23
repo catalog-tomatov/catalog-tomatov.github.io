@@ -6267,6 +6267,18 @@ input:focus-visible,
   font-weight: 800;
 }
 
+.saved-orders-hint {
+  flex: 0 0 auto;
+  margin: 0 1px 12px;
+  padding: 8px 11px;
+  border: 1px solid #e6eee6;
+  border-radius: 12px;
+  background: #f7faf6;
+  color: #65776b;
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
 .saved-orders-back {
   flex: 0 0 46px;
   width: 46px;
