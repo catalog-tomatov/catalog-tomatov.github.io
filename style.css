@@ -5312,6 +5312,7 @@ canvas {
 }
 
 .restore-order-sheet input {
+  box-sizing: border-box;
   width: 100%;
   min-height: 50px;
   padding: 0 14px;
