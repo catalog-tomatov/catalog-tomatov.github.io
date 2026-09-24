@@ -1,12 +1,12 @@
-const SHELL_CACHE = "catalog-shell-v130";
+const SHELL_CACHE = "catalog-shell-v131";
 const IMAGE_CACHE = "catalog-images-v5";
 const BADGE_COUNTER_URL = "./__catalog_badge_counter__";
 const SHELL_FILES = [
   "./",
   "./index.html",
-  "./style.css?v=68",
+  "./style.css?v=73",
   "./script.js?v=91",
-  "./chat.js?v=20260912-sync5",
+  "./chat.js?v=20260924-sync8",
   "./firebase-config.js?v=1",
   "./firebase-client.js?v=20260913-sync2",
   "./manifest.json",

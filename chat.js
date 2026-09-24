@@ -36,6 +36,7 @@ const CHAT_PAYMENT = {
 
   const CHAT_TARGET_IMAGE_BYTES = 350 * 1024;
   const CHAT_ATTACHMENT_LIMIT = 1024 * 1024;
+  const CHAT_ATTACHMENT_CACHE_MAX = 10;
   const chatApiUrl = () => `${CATALOG_API_URL}?chat=1`;
 
   const state = {
@@ -68,6 +69,8 @@ const CHAT_PAYMENT = {
     pushSyncDeniedAt: new Map(),
     pollFailures: 0,
     objectUrls: new Set(),
+    attachmentBlobs: new Map(),
+    attachmentFetches: new Map(),
     createPromises: new Map(),
     readStates: new Map(),
     memoryOutbox: new Map(),
@@ -2432,7 +2435,7 @@ async function resumeOutboxForCurrentChat() {
     }
     elements.chatMessages.dataset.orderId = orderId;
     elements.chatComposer.hidden = false;
-    updateQuota(payload.summary);
+    updateQuota(payload);
     if (scrollToEnd || wasNearBottom) {
       requestAnimationFrame(() => { elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight; });
     } else if (!canAppend) {
@@ -2657,6 +2660,12 @@ addDetail("Важно", CHAT_PAYMENT.paymentText, "note");
     pdfName.textContent = attachment.fileName || "Документ.pdf";
 
     pdfRow.append(pdfBadge, pdfName);
+    if (message.text) {
+      const caption = document.createElement("small");
+      caption.className = "chat-attachment-caption";
+      caption.textContent = message.text;
+      card.appendChild(caption);
+    }
     card.appendChild(pdfRow);
 
     /* PDF ещё отправляется */
@@ -2716,12 +2725,6 @@ addDetail("Важно", CHAT_PAYMENT.paymentText, "note");
       }
     });
 
-    if (message.text) {
-      const caption = document.createElement("small");
-      caption.textContent = message.text;
-      card.appendChild(caption);
-    }
-
     appendMessageTime(card, message.createdAt);
 
     return card;
@@ -2737,6 +2740,12 @@ addDetail("Важно", CHAT_PAYMENT.paymentText, "note");
   image.alt = "Фото";
   image.loading = "lazy";
 
+  if (message.text) {
+    const caption = document.createElement("small");
+    caption.className = "chat-attachment-caption";
+    caption.textContent = message.text;
+    card.appendChild(caption);
+  }
   card.appendChild(image);
 
   // Если фото только что отправили —
@@ -2833,12 +2842,6 @@ addDetail("Важно", CHAT_PAYMENT.paymentText, "note");
     return card;
   }
 
-  if (message.text) {
-    const caption = document.createElement("small");
-    caption.textContent = message.text;
-    card.appendChild(caption);
-  }
-
   appendMessageTime(card, message.createdAt);
 
   return card;
@@ -2852,9 +2855,25 @@ return card;
     return bytes >= 1024 ? `${Math.round(bytes / 1024)} КБ` : `${bytes} Б`;
   }
 
-  function updateQuota(summary) {
-    const remaining = Number(summary?.attachmentRemainingBytes);
-    const safeRemaining = Number.isFinite(remaining) ? Math.max(0, remaining) : CHAT_ATTACHMENT_LIMIT;
+  function attachmentRemainingForPayload(payload) {
+    const seen = new Set();
+    let usedBytes = 0;
+    (payload?.messages || []).forEach((message) => {
+      const attachment = message.type === "attachment" ? message.attachment : null;
+      const id = String(attachment?.attachmentId || message.attachmentId || "");
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      usedBytes += Math.max(0, Number(attachment?.sizeBytes) || 0);
+    });
+    const historyRemaining = Math.max(0, CHAT_ATTACHMENT_LIMIT - usedBytes);
+    const serverRemaining = Number(payload?.summary?.attachmentRemainingBytes);
+    return Number.isFinite(serverRemaining)
+      ? Math.min(Math.max(0, serverRemaining), historyRemaining)
+      : historyRemaining;
+  }
+
+  function updateQuota(payload) {
+    const safeRemaining = attachmentRemainingForPayload(payload);
     elements.quota.textContent = `Для вложений осталось ${formatBytes(safeRemaining)}`;
     const attachLabel = document.querySelector(".order-chat-attach");
     attachLabel?.classList.toggle("disabled", safeRemaining <= 0);
@@ -2871,30 +2890,46 @@ return card;
     throw new Error("Нет доступа к вложению.");
   }
 
-  const result = await apiPost({
-    action: "chat_attachment",
-    orderId,
-    chatToken,
-    attachmentId,
-  }, 25000);
-
-  const attachment = result?.attachment;
-
-  if (!attachment?.base64) {
-    throw new Error("Изображение не получено.");
+  const cacheKey = `${normalizeOrderId(orderId)}|${chatToken}|${attachmentId}`;
+  const cached = state.attachmentBlobs.get(cacheKey);
+  if (cached) {
+    state.attachmentBlobs.delete(cacheKey);
+    state.attachmentBlobs.set(cacheKey, cached);
+    return cached;
+  }
+  if (state.attachmentFetches.has(cacheKey)) {
+    return state.attachmentFetches.get(cacheKey);
   }
 
-  const binary = atob(attachment.base64);
-  const bytes = new Uint8Array(binary.length);
+  const request = (async () => {
+    const result = await apiPost({
+      action: "chat_attachment",
+      orderId,
+      chatToken,
+      attachmentId,
+    }, 25000);
 
-  for (let index = 0; index < binary.length; index++) {
-    bytes[index] = binary.charCodeAt(index);
+    const attachment = result?.attachment;
+    if (!attachment?.base64) throw new Error("Изображение не получено.");
+
+    const binary = atob(attachment.base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    const blob = new Blob([bytes], { type: attachment.mime || "application/octet-stream" });
+    state.attachmentBlobs.set(cacheKey, blob);
+    if (state.attachmentBlobs.size > CHAT_ATTACHMENT_CACHE_MAX) {
+      state.attachmentBlobs.delete(state.attachmentBlobs.keys().next().value);
+    }
+    return blob;
+  })();
+  state.attachmentFetches.set(cacheKey, request);
+  try {
+    return await request;
+  } finally {
+    state.attachmentFetches.delete(cacheKey);
   }
-
-  return new Blob(
-    [bytes],
-    { type: attachment.mime || "application/octet-stream" }
-  );
 }
 
   async function markChatReadSnapshot(orderIdValue, chatToken, payload = null) {
@@ -3128,7 +3163,7 @@ return card;
     elements.sendChat.disabled = true;
     try {
       const prepared = await prepareAttachment(file);
-      const remaining = Number(state.current?.payload?.summary?.attachmentRemainingBytes ?? CHAT_ATTACHMENT_LIMIT);
+      const remaining = attachmentRemainingForPayload(state.current?.payload);
       if (prepared.sizeBytes > remaining) {
         throw new Error("Для этого файла не хватает оставшегося места в чате.");
       }

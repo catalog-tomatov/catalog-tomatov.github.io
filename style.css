@@ -7131,6 +7131,19 @@ button:disabled,
   overflow: hidden;
 }
 
+.chat-attachment-card > .chat-attachment-caption {
+  padding-bottom: 6px;
+  color: #4b4038;
+  font-size: 15px;
+  font-weight: 600;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-attachment-card:has(.chat-attachment-image) > .chat-attachment-caption {
+  padding: 6px 7px 5px;
+}
+
 .chat-attachment-image {
   display: block;
   width: 100%;
