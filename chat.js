@@ -1847,9 +1847,12 @@ async function removeOutboxRequest(
 
   if (access?.chatToken) {
     const submissionId = latestSubmissionId(order);
+    const alreadyActive = Boolean(access.activatedSubmissionId) ||
+      state.summaries.get(normalizeOrderId(order.orderId))?.isActive === true;
     if (
       order.contactChannel === "chat" &&
       submissionId &&
+      !alreadyActive &&
       access.activatedSubmissionId !== submissionId
     ) {
       const result = await apiPost({
@@ -2254,6 +2257,7 @@ async function resumeOutboxForCurrentChat() {
     });
 
     let cached = state.current.payload || await readCachedChat(order.orderId);
+    const earlyAccess = await earlyAccessPromise;
     if (!state.current || normalizeOrderId(state.current.order?.orderId) !== normalizedOrderId) return;
     // Пустой кэш после MAX не должен подавлять красивый старт нового
     // внутреннего чата для только что созданного заказа или дозаказа.
@@ -2270,6 +2274,11 @@ async function resumeOutboxForCurrentChat() {
   renderChatPayload(cached, !sameChat);
   showChatLoading(false);
 
+} else if (
+  order.contactChannel === "chat" &&
+  (earlyAccess?.activatedSubmissionId || state.summaries.get(normalizedOrderId)?.isActive === true)
+) {
+  showChatLoading(true);
 } else {
   // Новый чат: покупатель появляется сразу,
   // продавец — через 6 секунд.
@@ -2302,7 +2311,6 @@ async function resumeOutboxForCurrentChat() {
 }
 
     try {
-      const earlyAccess = await earlyAccessPromise;
       const currentAccess = state.current &&
         normalizeOrderId(state.current.order?.orderId) === normalizedOrderId
         ? state.current.access
@@ -2394,7 +2402,6 @@ async function resumeOutboxForCurrentChat() {
 
     const hasCustomerMessage = payload.messages.some((message) => message.sender === "client");
     const showMaxWarning = Boolean(
-      !payload.localPending &&
       (state.current?.order?.contactChannel === "max" || payload.summary?.contactChannel === "max") &&
       payload.summary?.isActive !== true &&
       !hasCustomerMessage &&
