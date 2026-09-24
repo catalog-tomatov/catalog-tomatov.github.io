@@ -5220,7 +5220,7 @@ canvas {
 }
 
 .order-chat-quota {
-  min-height: 22px;
+  min-height: 12px;
   padding: 4px 15px;
   background: #fffdf9;
   color: #95867b;
