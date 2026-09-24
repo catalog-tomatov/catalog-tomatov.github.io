@@ -1694,7 +1694,8 @@ async function removeOutboxRequest(
     const preview = document.createElement("small");
     if (summary?.chatCreated) {
       title.textContent = `Чат по заказу ${orderId}`;
-      preview.textContent = summary.lastMessage || "Откройте переписку";
+      preview.textContent = summary.lastMessage && summary.lastMessage !== "Сообщений пока нет"
+        ? summary.lastMessage : "Откройте переписку";
     } else {
       title.textContent = "Написать продавцу";
       preview.textContent = "Задать вопрос по заказу";
