@@ -2,11 +2,12 @@
   "use strict";
 
   const CHAT_DB_NAME = "tomato-order-chat-v1";
-  const CHAT_DB_VERSION = 2;
+  const CHAT_DB_VERSION = 3;
   const CHAT_SEASON_KEY = "tomatoChatSeasonId";
   const CHAT_CONFIG_KEY = "tomatoChatSeasonConfig";
   const CHAT_POLL_FAST_INTERVAL = 3000;
   const CHAT_POLL_IDLE_INTERVAL = 15000;
+  const CHAT_POLL_CONNECTED_INTERVAL = 10000;
   const CHAT_POLL_FAST_WINDOW = 60000;
   const CHAT_PUSH_SNOOZE_KEY = "tomatoChatPushSnoozedUntil";
   const CHAT_PUSH_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -245,7 +246,7 @@ const CHAT_PAYMENT = {
           && !elements.chatModal.hidden
         ) {
           state.current.payload = payload;
-          stopChatPolling();
+          if (!state.pollTimer) startChatPolling();
           renderChatPayload(payload, false);
           if (Number(payload.summary?.unread || 0) > 0) {
             void markChatReadSnapshot(normalized, access.chatToken, payload);
@@ -343,6 +344,7 @@ const CHAT_PAYMENT = {
         if (!db.objectStoreNames.contains("chats")) db.createObjectStore("chats", { keyPath: "key" });
         if (!db.objectStoreNames.contains("meta")) db.createObjectStore("meta", { keyPath: "key" });
         if (!db.objectStoreNames.contains("outbox")) {db.createObjectStore("outbox", {keyPath: "key"});}
+        if (!db.objectStoreNames.contains("attachments")) db.createObjectStore("attachments", { keyPath: "key" });
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error || new Error("INDEXED_DB_ERROR"));
@@ -390,7 +392,7 @@ const dbDelete = (store, key) =>
     state.memoryOutbox.clear();
     const db = await openDb();
     try {
-      await Promise.all(["access", "chats", "meta", "outbox"].map((storeName) => new Promise((resolve, reject) => {
+      await Promise.all(["access", "chats", "meta", "outbox", "attachments"].map((storeName) => new Promise((resolve, reject) => {
         const transaction = db.transaction(storeName, "readwrite");
         const request = transaction.objectStore(storeName).clear();
         request.onsuccess = () => resolve();
@@ -1347,6 +1349,8 @@ async function removeOutboxRequest(
     state.statusRefreshQueued = false;
     state.access.clear();
     state.chatCache.clear();
+    state.attachmentBlobs.clear();
+    state.attachmentFetches.clear();
     try { await clearChatDatabase(); } catch (error) { console.warn("Не удалось очистить локальный чат", error); }
   }
 
@@ -1729,13 +1733,8 @@ async function removeOutboxRequest(
     chatButton.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      // This button explicitly chooses the internal chat, including when an
-      // earlier order was sent through MAX. Opening alone must not stay inert.
-      const selectedOrder = findSavedOrder(orderId);
-      if (selectedOrder && selectedOrder.contactChannel !== "chat") {
-        selectedOrder.contactChannel = "chat";
-        persistSavedOrders();
-      }
+      // Opening a saved MAX order is only a view. Its first customer message
+      // activates the chat; the checkout choice is handled separately.
       void openOrderChat(orderId);
     });
     card.appendChild(chatButton);
@@ -2338,7 +2337,7 @@ async function resumeOutboxForCurrentChat() {
       await resumeOutboxForCurrentChat();
 
       setChatError("");
-      if (!state.realtimeReady.has(orderKey(order.orderId))) startChatPolling();
+      startChatPolling();
     } catch (error) {
       if (state.current?.payload?.messages?.length) {
         setChatError("Нет связи с сервером. Показана последняя сохранённая история.");
@@ -2777,6 +2776,14 @@ addDetail("Важно", CHAT_PAYMENT.paymentText, "note");
   message.delivery !== "sending" &&
   state.current?.access?.chatToken
 ) {
+    const cacheKey = `${String(state.config?.seasonId || state.current?.order?.seasonId || "")}|${normalizeOrderId(state.current.order.orderId)}|${state.current.access.chatToken}|${attachment.attachmentId}`;
+    const cachedBlob = state.attachmentBlobs.get(cacheKey);
+    if (cachedBlob) {
+      const url = URL.createObjectURL(cachedBlob);
+      state.objectUrls.add(url);
+      image.src = url;
+      image.dataset.loaded = "1";
+    } else {
     const load = async () => {
       if (image.dataset.loaded) return;
       image.dataset.loaded = "1";
@@ -2815,6 +2822,7 @@ addDetail("Важно", CHAT_PAYMENT.paymentText, "note");
       observer.observe(image);
     } else {
       void load();
+    }
     }
   }
 
@@ -2894,6 +2902,31 @@ return card;
     elements.chatFile.disabled = safeRemaining <= 0;
   }
 
+  function rememberAttachmentBlob(key, blob) {
+    state.attachmentBlobs.delete(key);
+    state.attachmentBlobs.set(key, blob);
+    if (state.attachmentBlobs.size > CHAT_ATTACHMENT_CACHE_MAX) {
+      state.attachmentBlobs.delete(state.attachmentBlobs.keys().next().value);
+    }
+  }
+
+  async function persistAttachmentBlob(key, blob) {
+    try {
+      await dbPut("attachments", { key, blob, sizeBytes: blob.size, savedAt: Date.now() });
+      const entries = await dbGetAll("attachments");
+      let bytes = entries.reduce((sum, entry) => sum + (Number(entry.sizeBytes) || 0), 0);
+      const oldest = entries.sort((a, b) => (Number(a.savedAt) || 0) - (Number(b.savedAt) || 0));
+      while (oldest.length > CHAT_ATTACHMENT_CACHE_MAX || bytes > 12 * 1024 * 1024) {
+        const entry = oldest.shift();
+        if (!entry) break;
+        bytes -= Number(entry.sizeBytes) || 0;
+        await dbDelete("attachments", entry.key);
+      }
+    } catch (error) {
+      console.warn("Не удалось сохранить вложение на устройстве", error);
+    }
+  }
+
   async function fetchCurrentAttachment(attachmentId) {
   const current = state.current;
 
@@ -2904,11 +2937,11 @@ return card;
     throw new Error("Нет доступа к вложению.");
   }
 
-  const cacheKey = `${normalizeOrderId(orderId)}|${chatToken}|${attachmentId}`;
+  const seasonId = String(state.config?.seasonId || current?.order?.seasonId || "");
+  const cacheKey = `${seasonId}|${normalizeOrderId(orderId)}|${chatToken}|${attachmentId}`;
   const cached = state.attachmentBlobs.get(cacheKey);
   if (cached) {
-    state.attachmentBlobs.delete(cacheKey);
-    state.attachmentBlobs.set(cacheKey, cached);
+    rememberAttachmentBlob(cacheKey, cached);
     return cached;
   }
   if (state.attachmentFetches.has(cacheKey)) {
@@ -2916,6 +2949,11 @@ return card;
   }
 
   const request = (async () => {
+    const stored = await dbGet("attachments", cacheKey).catch(() => null);
+    if (stored?.blob instanceof Blob) {
+      rememberAttachmentBlob(cacheKey, stored.blob);
+      return stored.blob;
+    }
     const result = await apiPost({
       action: "chat_attachment",
       orderId,
@@ -2932,9 +2970,9 @@ return card;
       bytes[index] = binary.charCodeAt(index);
     }
     const blob = new Blob([bytes], { type: attachment.mime || "application/octet-stream" });
-    state.attachmentBlobs.set(cacheKey, blob);
-    if (state.attachmentBlobs.size > CHAT_ATTACHMENT_CACHE_MAX) {
-      state.attachmentBlobs.delete(state.attachmentBlobs.keys().next().value);
+    if (seasonId === String(state.config?.seasonId || current?.order?.seasonId || "")) {
+      rememberAttachmentBlob(cacheKey, blob);
+      void persistAttachmentBlob(cacheKey, blob);
     }
     return blob;
   })();
@@ -2999,10 +3037,11 @@ return card;
 
   function startChatPolling() {
     stopChatPolling();
-    if (state.current && state.realtimeReady.has(orderKey(state.current.order?.orderId))) return;
     if (!state.current || document.hidden || elements.chatModal.hidden) return;
     const recentlyActive = Date.now() - state.chatActivityAt < CHAT_POLL_FAST_WINDOW;
-    const interval = recentlyActive ? CHAT_POLL_FAST_INTERVAL : CHAT_POLL_IDLE_INTERVAL;
+    const interval = state.realtimeReady.has(orderKey(state.current.order?.orderId))
+      ? CHAT_POLL_CONNECTED_INTERVAL
+      : recentlyActive ? CHAT_POLL_FAST_INTERVAL : CHAT_POLL_IDLE_INTERVAL;
     state.pollTimer = window.setTimeout(pollCurrentChat, interval);
   }
 
