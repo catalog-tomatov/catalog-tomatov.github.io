@@ -317,13 +317,17 @@ const CHAT_PAYMENT = {
       : saved.items;
     const nextTotal = Number(order.total) || 0;
     const nextTotalItems = Number(order.itemCount) || 0;
+    const nextName = typeof order.name === "string" && order.name.trim()
+      ? order.name.trim() : saved.name;
     const changed =
+      saved.name !== nextName ||
       Number(saved.total) !== nextTotal ||
       Number(saved.totalItems) !== nextTotalItems ||
       JSON.stringify(saved.items || []) !== JSON.stringify(nextItems || []);
 
     saved.schemaVersion = 2;
     if (seasonId) saved.seasonId = seasonId;
+    saved.name = nextName;
     saved.total = nextTotal;
     saved.totalItems = nextTotalItems;
     saved.items = nextItems;
