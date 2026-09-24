@@ -265,12 +265,16 @@ function saveOrderSnapshot(snapshot) {
     if (requestId && requestIds.includes(requestId)) return;
 
     if (nextOrder.mode === "addon") {
+      const confirmedOrderTotal = snapshot.orderTotal == null
+        ? NaN : Number(snapshot.orderTotal);
       nextOrder = {
         ...existing,
         ...nextOrder,
         title: existing.title || "ЗАКАЗ " + orderId,
         mode: "normal",
-        total: (Number(existing.total) || 0) + nextOrder.total,
+        total: Number.isFinite(confirmedOrderTotal)
+          ? confirmedOrderTotal
+          : (Number(existing.total) || 0) + nextOrder.total,
         totalItems: (Number(existing.totalItems) || 0) + nextOrder.totalItems,
         items: mergeSavedOrderItems(existing.items || [], nextOrder.items),
         requestIds: requestId
@@ -286,6 +290,11 @@ function saveOrderSnapshot(snapshot) {
   savedOrders = savedOrders.slice(0, SAVED_ORDERS_LIMIT);
   persistSavedOrders();
   renderSavedOrdersSummary();
+  if (snapshot.mode === "addon" && typeof window.refreshChatSummaries_ === "function") {
+    // The server has confirmed the add-on: refresh the payment status now,
+    // instead of waiting for the next background polling interval.
+    void window.refreshChatSummaries_();
+  }
 }
 
 function createClientRequestId() {
@@ -2118,6 +2127,7 @@ document.body.appendChild(blocker);
           createdAt: today.toISOString(),
           dateLabel: today.toLocaleDateString("ru-RU"),
           total: confirmedTotalPrice,
+          orderTotal: confirmedOrderTotal,
           totalItems,
           items: submittedItems,
           clientRequestId,
@@ -3472,6 +3482,9 @@ function openSavedOrders() {
   modal.style.display = "flex";
   modal.setAttribute("aria-hidden", "false");
   lockBody();
+  if (typeof window.refreshChatSummaries_ === "function") {
+    void window.refreshChatSummaries_();
+  }
 }
 
 function closeSavedOrders() {
@@ -4674,7 +4687,7 @@ if (pendingSheetData) {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register("./sw.js?v=125");
+    navigator.serviceWorker.register("./sw.js?v=126");
   });
 }
 

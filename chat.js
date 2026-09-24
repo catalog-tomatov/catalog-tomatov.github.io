@@ -1671,12 +1671,15 @@ async function removeOutboxRequest(
   function appendSavedOrderChatControls(card, order) {
     const orderId = normalizeOrderId(order.orderId);
     const summary = state.summaries.get(orderId) || null;
+    const awaitingOrderSync = summary && Number.isFinite(Number(summary.total))
+      && Number(summary.total) !== Number(order.total);
     const status = card.querySelector(".saved-order-card-status") || document.createElement("strong");
-    status.className = summary?.statusUnavailable
+    status.className = summary?.statusUnavailable || awaitingOrderSync
       ? "saved-order-card-status"
       : `saved-order-card-status ${statusClass(effectiveOrderStatus(summary))}`;
     status.textContent = summary?.statusUnavailable
       ? "СТАТУС НЕДОСТУПЕН"
+      : awaitingOrderSync ? "СТАТУС ОБНОВЛЯЕТСЯ"
       : summary ? effectiveOrderStatusLabel(summary) : "СТАТУС ОБНОВЛЯЕТСЯ";
     if (!card.contains(status)) card.appendChild(status);
 
@@ -1726,6 +1729,13 @@ async function removeOutboxRequest(
     chatButton.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
+      // This button explicitly chooses the internal chat, including when an
+      // earlier order was sent through MAX. Opening alone must not stay inert.
+      const selectedOrder = findSavedOrder(orderId);
+      if (selectedOrder && selectedOrder.contactChannel !== "chat") {
+        selectedOrder.contactChannel = "chat";
+        persistSavedOrders();
+      }
       void openOrderChat(orderId);
     });
     card.appendChild(chatButton);
@@ -1833,9 +1843,8 @@ async function removeOutboxRequest(
     return String(order?.lastSubmissionRequestId || requestIds[requestIds.length - 1] || "");
   }
 
-  async function ensureChatAccess(order) {
-  let access =
-    await getAccess(order.orderId);
+  async function ensureChatAccess(order, existingAccess = null) {
+  let access = existingAccess || await getAccess(order.orderId);
 
   if (access?.chatToken) {
     const submissionId = latestSubmissionId(order);
@@ -2299,7 +2308,12 @@ async function resumeOutboxForCurrentChat() {
         normalizeOrderId(state.current.order?.orderId) === normalizedOrderId
         ? state.current.access
         : null;
-      const access = currentAccess || (earlyAccess?.chatToken ? earlyAccess : null) || await ensureChatAccess(order);
+      // Even an existing token needs chat_activate after a new submission.
+      // Skipping ensureChatAccess left addon chats inactive in Pult.
+      const access = await ensureChatAccess(
+        order,
+        currentAccess?.chatToken ? currentAccess : earlyAccess,
+      );
       const currentReadPayload = state.current &&
         normalizeOrderId(state.current.order?.orderId) === normalizedOrderId
         ? state.current.payload
