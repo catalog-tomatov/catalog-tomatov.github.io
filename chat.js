@@ -2336,6 +2336,12 @@ async function resumeOutboxForCurrentChat() {
       );
       if (!state.current || normalizeOrderId(state.current.order?.orderId) !== normalizedOrderId) return;
       state.current.access = access;
+      // Cached history may have rendered before the token arrived. Redraw only
+      // then: otherwise a photo without src stays unchanged after history sync.
+      if (state.current.payload && elements.chatMessages.querySelector('.chat-attachment-image:not([src])')) {
+        delete elements.chatMessages.dataset.orderId;
+        renderChatPayload(state.current.payload, false);
+      }
       scheduleChatPushPrompt({ ...access, orderId: order.orderId });
 
       // Firebase подключается параллельно и никогда не задерживает открытие
