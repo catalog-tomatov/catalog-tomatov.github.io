@@ -378,6 +378,14 @@ export async function sendRealtimeText({ apiUrl, seasonId, orderId, chatToken, s
     const linkResult = await linkRealtimeOrder({ apiUrl, orderId, chatToken });
     activeSeasonId = String(linkResult?.seasonId || activeSeasonId);
     membership = membershipKey(activeSeasonId, orderId, user.uid);
+  } else {
+    // A cached Firestore membership survives deletion from Sheets. Recheck
+    // the live order before writing directly to Firestore.
+    await postJson(apiUrl, {
+      action: "chat_verify_access",
+      orderId,
+      chatToken,
+    }, 30000);
   }
 
   const message = {

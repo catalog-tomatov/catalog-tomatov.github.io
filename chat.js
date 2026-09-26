@@ -1185,8 +1185,13 @@ async function removeOutboxRequest(
       };
     }
 
-    const cachedMessages = Array.isArray(cached.messages) ? cached.messages : [];
     const incomingMessages = Array.isArray(incoming?.messages) ? incoming.messages : [];
+    const confirmedInitial = cached.localPending === true
+      && incoming?.messagesMode !== "delta"
+      && incomingMessages.some((message) => /^auto_(?:client|order|seller|payment)_/.test(String(message.messageId || "")));
+    const cachedMessages = (Array.isArray(cached.messages) ? cached.messages : []).filter((message) => (
+      !confirmedInitial || !/^auto_(?:client|order|seller|payment)_/.test(String(message.messageId || ""))
+    ));
     const localImages = new Map(cachedMessages.flatMap((message) => (
       message.attachment?.localBase64
         ? [[chatMessageKey(message), message.attachment.localBase64]]
@@ -1252,6 +1257,7 @@ async function removeOutboxRequest(
     return {
       ...cached,
       ...incoming,
+      localPending: confirmedInitial ? false : Boolean(incoming?.localPending ?? cached.localPending),
       order: incoming?.order || cached.order,
       summary: incoming?.summary || cached.summary,
       messagesMode: "full",
@@ -1438,16 +1444,16 @@ async function removeOutboxRequest(
     );
   }
 
-  async function preserveOrMarkUnavailableSummary(order) {
+  async function preserveOrMarkUnavailableSummary(order, forceUnavailable = false) {
     const orderId = normalizeOrderId(order?.orderId);
     if (!orderId) return;
 
     const current = state.summaries.get(orderId) || null;
-    if (hasConfirmedOrderStatus(current)) return;
+    if (!forceUnavailable && hasConfirmedOrderStatus(current)) return;
 
     const cached = await readCachedChat(orderId).catch(() => null);
     const cachedSummary = cached?.summary || null;
-    if (hasConfirmedOrderStatus(cachedSummary)) {
+    if (!forceUnavailable && hasConfirmedOrderStatus(cachedSummary)) {
       const corrected = applyLatestKnownOrderStatus({ summary: cachedSummary }, orderId);
       state.summaries.set(orderId, {
         ...corrected.summary,
@@ -1534,7 +1540,7 @@ async function removeOutboxRequest(
       await Promise.all(savedOrders.map((order) => (
         returnedOrderIds.has(normalizeOrderId(order.orderId))
           ? null
-          : preserveOrMarkUnavailableSummary(order)
+          : preserveOrMarkUnavailableSummary(order, true)
       )));
     } catch (error) {
       if (refreshSequence !== state.summaryRefreshSequence) return;
@@ -1708,8 +1714,15 @@ async function removeOutboxRequest(
     const preview = document.createElement("small");
     if (summary?.chatCreated) {
       title.textContent = `Чат по заказу ${orderId}`;
+      const cachedHistory = state.chatCache.get(orderKey(orderId))?.payload;
+      const cachedLast = !summary.statusUnavailable && !cachedHistory?.localPending
+        ? cachedHistory?.messages?.at(-1) : null;
+      const cachedPreview = String(cachedLast?.text || "").trim()
+        || (cachedLast?.type === "order_card" ? "Карточка заказа"
+          : cachedLast?.type === "payment_card" ? "Реквизиты для оплаты"
+          : cachedLast?.type === "attachment" ? "Вложение" : "");
       preview.textContent = summary.lastMessage && summary.lastMessage !== "Сообщений пока нет"
-        ? summary.lastMessage : "Откройте переписку";
+        ? summary.lastMessage : cachedPreview || "История переписки";
     } else {
       title.textContent = "Написать продавцу";
       preview.textContent = "Задать вопрос по заказу";
@@ -2252,17 +2265,26 @@ async function resumeOutboxForCurrentChat() {
     closeSavedOrders();
     showOverlay(elements.chatModal);
     clearUnreadLocally(normalizedOrderId, state.current.payload);
-    const earlyReadPayload = state.current.payload;
-    void earlyAccessPromise.then((earlyAccess) => {
-      if (earlyAccess?.chatToken) {
-        return markChatReadSnapshot(normalizedOrderId, earlyAccess.chatToken, earlyReadPayload);
-      }
-      return undefined;
-    });
-
     let cached = state.current.payload || await readCachedChat(order.orderId);
     const earlyAccess = await earlyAccessPromise;
     if (!state.current || normalizeOrderId(state.current.order?.orderId) !== normalizedOrderId) return;
+    if (earlyAccess?.chatToken) {
+      try {
+        await apiPost({ action: "chat_verify_access", orderId: order.orderId, chatToken: earlyAccess.chatToken }, 15000);
+      } catch (error) {
+        state.current.payload = null;
+        elements.chatMessages.replaceChildren();
+        delete elements.chatMessages.dataset.orderId;
+        elements.chatComposer.hidden = true;
+        setChatError(error?.code === "ORDER_NOT_FOUND"
+          ? "Заказ удалён из таблицы. Переписка недоступна."
+          : "Не удалось проверить заказ. Повторите попытку позже.");
+        showChatLoading(false);
+        return;
+      }
+      if (!state.current || normalizeOrderId(state.current.order?.orderId) !== normalizedOrderId) return;
+      void markChatReadSnapshot(normalizedOrderId, earlyAccess.chatToken, state.current.payload);
+    }
     // Пустой кэш после MAX не должен подавлять красивый старт нового
     // внутреннего чата для только что созданного заказа или дозаказа.
     if (
@@ -2357,6 +2379,14 @@ async function resumeOutboxForCurrentChat() {
       setChatError("");
       startChatPolling();
     } catch (error) {
+      if (error?.code === "ORDER_NOT_FOUND") {
+        state.current.payload = null;
+        elements.chatMessages.replaceChildren();
+        delete elements.chatMessages.dataset.orderId;
+        elements.chatComposer.hidden = true;
+        setChatError("Заказ удалён из таблицы. Переписка недоступна.");
+        return;
+      }
       if (state.current?.payload?.messages?.length) {
         setChatError("Нет связи с сервером. Показана последняя сохранённая история.");
       } else {
