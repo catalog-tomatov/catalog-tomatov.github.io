@@ -79,6 +79,7 @@ const CHAT_PAYMENT = {
     realtimeConnections: new Map(),
     realtimeReady: new Set(),
     realtimeRelinking: new Set(),
+    passiveMaxBootstrapAttempted: new Set(),
     initialized: false,
   };
 
@@ -544,10 +545,16 @@ const dbDelete = (store, key) =>
     return true;
   }
 
+  function chatPushAccessEligible(access) {
+    return Boolean(access?.chatToken) && (
+      access?.chatCreated === true || access?.contactChannel !== "max"
+    );
+  }
+
   async function syncChatPushSubscriptions(preferredAccess = null) {
     if (!chatPushSupported() || Notification.permission !== "granted") return false;
     const preferredOrderId = normalizeOrderId(preferredAccess?.orderId);
-    if (preferredAccess?.chatToken && preferredOrderId) {
+    if (chatPushAccessEligible(preferredAccess) && preferredOrderId) {
       state.pushPendingAccess.set(preferredOrderId, preferredAccess);
     }
     if (state.pushSyncPromise) return state.pushSyncPromise;
@@ -565,7 +572,7 @@ const dbDelete = (store, key) =>
         [...queued, ...rows].forEach((access) => {
           const orderId = normalizeOrderId(access?.orderId);
           if (
-            access?.chatToken
+            chatPushAccessEligible(access)
             && access.seasonId === state.config?.seasonId
             && orderId
           ) {
@@ -619,7 +626,7 @@ const dbDelete = (store, key) =>
   }
 
   function scheduleChatPushPrompt(access) {
-    if (!chatPushSupported() || !access?.chatToken) return;
+    if (!chatPushSupported() || !chatPushAccessEligible(access)) return;
     if (Notification.permission === "granted") {
       void syncChatPushSubscriptions(access).catch((error) => console.warn("Не удалось обновить Push-подписку", error));
       return;
@@ -1373,6 +1380,7 @@ async function removeOutboxRequest(
     }
     state.statusRefreshPromise = null;
     state.statusRefreshQueued = false;
+    state.passiveMaxBootstrapAttempted.clear();
     state.access.clear();
     state.chatCache.clear();
     state.attachmentBlobs.clear();
@@ -1536,6 +1544,7 @@ async function removeOutboxRequest(
 
         updateSavedOrderFromSnapshot(key, item.order, result.seasonId);
       });
+      let passiveMaxBootstrapQueued = false;
       await Promise.all(returnedSummaries.map(async (item) => {
         const itemOrderId = item.order?.orderId || item.summary?.orderId;
         const cached = await readCachedChat(itemOrderId);
@@ -1552,6 +1561,17 @@ async function removeOutboxRequest(
           void ensureRealtimeOrder(savedOrder, access).catch((error) => {
             console.warn("Realtime-подписка заказа отложена", error);
           });
+        } else if (
+          savedOrder?.contactChannel === "max"
+          && !passiveMaxBootstrapQueued
+          && !state.passiveMaxBootstrapAttempted.has(normalizeOrderId(itemOrderId))
+        ) {
+          // Миграция уже сохранённых MAX-заказов: не чаще одного заказа за
+          // штатный цикл сводок и только одна попытка за сессию. Нового polling нет.
+          const bootstrapOrderId = normalizeOrderId(itemOrderId);
+          passiveMaxBootstrapQueued = true;
+          state.passiveMaxBootstrapAttempted.add(bootstrapOrderId);
+          void ensurePassiveMaxRealtime_(savedOrder);
         }
       }));
       await Promise.all(savedOrders.map((order) => (
@@ -1855,10 +1875,28 @@ async function removeOutboxRequest(
   if (order) {
     order.contactChannel = "max";
     persistSavedOrders();
+    // MAX остаётся внешним каналом общения, но получает техническую realtime-
+    // подписку на документ заказа. Запуск не блокирует отправку карточки в MAX.
+    void ensurePassiveMaxRealtime_(order);
   }
 
   hideOverlay(elements.shareModal);
   await shareOrderCardToMax_();
+}
+
+async function ensurePassiveMaxRealtime_(order) {
+  if (!order || order.contactChannel !== "max") return false;
+  try {
+    const access = await ensureChatAccess(order);
+    if (!access?.chatToken) return false;
+    await ensureRealtimeOrder(order, access);
+    return true;
+  } catch (error) {
+    // Не добавляем новый polling/таймер: штатный chat_summaries остаётся
+    // резервным каналом, если разовая привязка Firestore временно не удалась.
+    console.warn("Realtime-статус MAX отложен; оставлена штатная сверка", error);
+    return false;
+  }
 }
 
   function showChatLoading(value) {
@@ -1957,12 +1995,13 @@ async function removeOutboxRequest(
         : 0,
     }, 25000);
 
-    await putAccess(
+    access = await putAccess(
       order.orderId,
       {
         chatToken: result.chatToken,
         pendingCreateRequestId: "",
-        chatCreated: true,
+        chatCreated: result.summary?.chatCreated === true,
+        contactChannel: result.summary?.contactChannel || order.contactChannel || "",
         activatedSubmissionId: order.contactChannel === "chat"
           ? latestSubmissionId(order)
           : "",
