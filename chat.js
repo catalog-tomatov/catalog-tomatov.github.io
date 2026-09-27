@@ -1855,10 +1855,28 @@ async function removeOutboxRequest(
   if (order) {
     order.contactChannel = "max";
     persistSavedOrders();
+
+    // MAX не активирует внутренний чат. Создаём только технический доступ и
+    // realtime-подписку на подтверждённый снимок заказа. Ошибка здесь не
+    // мешает отправке в MAX: резервный chat_summaries продолжает работать.
+    void ensurePassiveOrderRealtime_(order);
   }
 
   hideOverlay(elements.shareModal);
   await shareOrderCardToMax_();
+}
+
+async function ensurePassiveOrderRealtime_(order) {
+  if (!order || order.contactChannel !== "max") return false;
+  try {
+    const access = await ensureChatAccess(order);
+    if (!access?.chatToken) return false;
+    await ensureRealtimeOrder(order, access);
+    return true;
+  } catch (error) {
+    console.warn("Realtime-статус MAX отложен; используется резервная сверка", error);
+    return false;
+  }
 }
 
   function showChatLoading(value) {
