@@ -6,7 +6,7 @@ const SHELL_FILES = [
   "./index.html",
   "./style.css?v=68",
   "./script.js?v=91",
-  "./chat.js?v=20260927-sync12",
+  "./chat.js?v=20260927-maxstatus1",
   "./firebase-config.js?v=1",
   "./firebase-client.js?v=20260927-sync11",
   "./manifest.json",
