@@ -1495,58 +1495,6 @@ async function removeOutboxRequest(
     state.summaries.set(orderId, corrected.summary);
   }
 
-  async function refreshPassiveOrderStatuses(entries, refreshSequence) {
-    const passiveEntries = entries.filter((entry) => !entry.chatToken);
-    if (!passiveEntries.length) return;
-
-    try {
-      // MAX / orders without an activated internal chat have no Firestore
-      // realtime channel. Refresh only those orders first so one slow summary
-      // request for the whole saved-orders list cannot keep their payment
-      // status stale until the user opens the chat manually.
-      const result = await apiPost(
-        { action: "chat_summaries", orders: passiveEntries },
-        12000,
-      );
-      if (refreshSequence !== state.summaryRefreshSequence) return;
-
-      const returnedSummaries = Array.isArray(result?.summaries)
-        ? result.summaries
-        : [];
-
-      returnedSummaries.forEach((item) => {
-        const key = normalizeOrderId(item.order?.orderId || item.summary?.orderId);
-        if (!key) return;
-
-        item.summary = suppressReadSummary(key, item.summary);
-        rememberAuthoritativeOrderState(key, item.order, item.summary);
-
-        const authoritativePayload = applyLatestKnownOrderStatus(
-          { order: item.order || {}, summary: item.summary || {} },
-          key,
-        );
-        item.order = authoritativePayload.order;
-        item.summary = preserveNewerChatPreview(
-          state.summaries.get(key),
-          authoritativePayload.summary,
-        );
-        state.summaries.set(key, item.summary);
-        updateSavedOrderFromSnapshot(key, item.order, result.seasonId);
-      });
-
-      // Apply the fresh status immediately; the normal full summary refresh
-      // below still runs as the existing fallback for every saved order.
-      renderSavedOrdersSummary();
-      if (document.getElementById("savedOrdersModal")?.style.display === "flex") {
-        renderSavedOrdersList();
-      }
-    } catch (error) {
-      if (error?.code !== "REQUEST_TIMEOUT") {
-        console.warn("Не удалось быстро обновить MAX-статусы", error);
-      }
-    }
-  }
-
   async function refreshChatSummariesNow() {
     const refreshSequence = ++state.summaryRefreshSequence;
     if (!state.config || state.config.seasonClosed || !savedOrders.length) {
@@ -1563,8 +1511,6 @@ async function removeOutboxRequest(
         chatToken: access?.chatToken || "",
       });
     }
-
-    await refreshPassiveOrderStatuses(entries, refreshSequence);
 
     try {
       const result = await apiPost({ action: "chat_summaries", orders: entries }, 30000);
