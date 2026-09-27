@@ -248,6 +248,15 @@ function realtimeMessage(documentSnapshot) {
   };
 }
 
+function withoutPreActivationPaymentStatuses(messages) {
+  const firstClientIndex = messages.findIndex((message) => message.sender === "client");
+  return messages.filter((message, index) => !(
+    message.eventKind === "payment_status"
+    && message.source === "pult_payment"
+    && (firstClientIndex < 0 || index < firstClientIndex)
+  ));
+}
+
 function messagePreview(message) {
   if (message.text) return message.text;
   if (message.type === "order_card") return "Карточка заказа";
@@ -273,13 +282,14 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
   const emit = () => {
     if (!orderData || typeof onData !== "function") return;
     const order = orderData.order || {};
-    const unread = messages.filter((message) => (
+    const visibleMessages = withoutPreActivationPaymentStatuses(messages);
+    const unread = visibleMessages.filter((message) => (
       (viewer === "seller"
         ? message.sender === "client"
         : message.sender === "seller" || message.sender === "system")
       && (Date.parse(message.createdAt || "") || 0) > readAt
     )).length;
-    const last = messages.length ? messages[messages.length - 1] : null;
+    const last = visibleMessages.length ? visibleMessages[visibleMessages.length - 1] : null;
     onData({
       success: true,
       seasonId: String(orderData.seasonId || seasonId),
@@ -305,7 +315,7 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
         attachmentRemainingBytes: Math.max(1024 * 1024 - (Number(orderData.attachmentBytes) || 0), 0),
       },
       messagesMode: "full",
-      messages,
+      messages: visibleMessages,
       realtime: true,
     });
   };

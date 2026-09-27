@@ -212,6 +212,7 @@ const CHAT_PAYMENT = {
         const memory = currentMemory || state.chatCache.get(key)?.payload;
         let payload = mergeChatPayload(memory, incoming);
         payload.summary = suppressReadSummary(normalized, payload.summary);
+        payload.summary = preserveNewerChatPreview(state.summaries.get(normalized), payload.summary);
 
         // Событие оплаты создаёт только авторизованный продавец. Оно содержит
         // уже подтверждённое Пультом значение, поэтому карточка меняется в том
@@ -929,22 +930,27 @@ const dbDelete = (store, key) =>
       });
   }
 
+  function preserveNewerChatPreview(previous, incoming) {
+    if (!incoming) return incoming;
+    const previousAt = Date.parse(previous?.lastAt || "") || 0;
+    const incomingAt = Date.parse(incoming.lastAt || "") || 0;
+    if (previousAt <= incomingAt) return incoming;
+    return {
+      ...incoming,
+      lastMessage: previous.lastMessage,
+      lastAt: previous.lastAt,
+      chatCreated: Boolean(previous.chatCreated || incoming.chatCreated),
+      isActive: Boolean(previous.isActive || incoming.isActive),
+    };
+  }
+
   function commitChatSummary(orderIdValue, payload) {
     const orderId = normalizeOrderId(orderIdValue);
     if (!orderId || !payload?.summary) return;
 
     const previous = state.summaries.get(orderId) || {};
     const incoming = suppressReadSummary(orderId, payload.summary);
-    const previousAt = Date.parse(previous.lastAt || "") || 0;
-    const incomingAt = Date.parse(incoming.lastAt || "") || 0;
-    const next = { ...previous, ...incoming };
-
-    // Медленный ответ не имеет права вернуть старый текст превью поверх уже
-    // полученного realtime-сообщения.
-    if (previousAt > incomingAt) {
-      next.lastAt = previous.lastAt;
-      next.lastMessage = previous.lastMessage;
-    }
+    const next = { ...previous, ...preserveNewerChatPreview(previous, incoming) };
 
     const corrected = applyLatestKnownOrderStatus({ summary: next }, orderId);
     state.summaries.set(orderId, corrected.summary);
@@ -1176,6 +1182,15 @@ async function removeOutboxRequest(
     return [...messages];
   }
 
+  function withoutPreActivationPaymentStatuses(messages) {
+    const firstClientIndex = messages.findIndex((message) => message.sender === "client");
+    return messages.filter((message, index) => !(
+      message.eventKind === "payment_status"
+      && message.source === "pult_payment"
+      && (firstClientIndex < 0 || index < firstClientIndex)
+    ));
+  }
+
   function mergeChatPayload(cached, incoming) {
     if (!cached?.messages?.length) {
       return {
@@ -1253,6 +1268,7 @@ async function removeOutboxRequest(
       return safeLeft - safeRight
         || positions.get(chatMessageKey(left)) - positions.get(chatMessageKey(right));
     })));
+    const visibleMessages = withoutPreActivationPaymentStatuses(messages);
 
     return {
       ...cached,
@@ -1261,7 +1277,7 @@ async function removeOutboxRequest(
       order: incoming?.order || cached.order,
       summary: incoming?.summary || cached.summary,
       messagesMode: "full",
-      messages,
+      messages: visibleMessages,
     };
   }
 
@@ -1515,6 +1531,7 @@ async function removeOutboxRequest(
         );
         item.order = authoritativePayload.order;
         item.summary = authoritativePayload.summary;
+        item.summary = preserveNewerChatPreview(state.summaries.get(key), item.summary);
         state.summaries.set(key, item.summary);
 
         updateSavedOrderFromSnapshot(key, item.order, result.seasonId);
@@ -2266,6 +2283,9 @@ async function resumeOutboxForCurrentChat() {
     showOverlay(elements.chatModal);
     clearUnreadLocally(normalizedOrderId, state.current.payload);
     let cached = state.current.payload || await readCachedChat(order.orderId);
+    if (cached && Array.isArray(cached.messages)) {
+      cached.messages = withoutPreActivationPaymentStatuses(cached.messages);
+    }
     const earlyAccess = await earlyAccessPromise;
     if (!state.current || normalizeOrderId(state.current.order?.orderId) !== normalizedOrderId) return;
     if (earlyAccess?.chatToken) {
