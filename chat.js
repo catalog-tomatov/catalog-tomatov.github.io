@@ -2326,13 +2326,13 @@ async function resumeOutboxForCurrentChat() {
       cached.messages = withoutPreActivationPaymentStatuses(cached.messages);
     }
     if (cached?.messages?.length) {
-      // Показываем только сохранённую историю; подтверждённый статус и отправка
-      // появятся после проверки существования заказа в Sheets.
+      // Существующий чат показываем сразу из локального кэша. Статус берём из
+      // последнего уже подтверждённого состояния Каталога, а отправку оставляем
+      // заблокированной до проверки существования заказа в Sheets.
+      cached = applyLatestKnownOrderStatus(cached, normalizedOrderId);
       state.current.payload = cached;
       renderChatPayload(cached, !sameChat);
       elements.chatComposer.hidden = true;
-      elements.chatStatus.textContent = "";
-      elements.chatStatus.className = "order-chat-status";
       showChatLoading(false);
     }
     const earlyAccess = await earlyAccessPromise;
