@@ -1742,6 +1742,7 @@ async function removeOutboxRequest(
 
   function effectiveOrderStatusLabel(source) {
     if (source?.statusUnavailable) return "СТАТУС НЕДОСТУПЕН";
+    if (source?.statusPending) return "СТАТУС ОБНОВЛЯЕТСЯ";
     const status = effectiveOrderStatus(source);
     if (status === "debt") {
       const debt = Number(source?.debt) || 0;
@@ -1760,6 +1761,11 @@ async function removeOutboxRequest(
       && ["unpaid", "debt", "paid", "issued"].includes(String(source.status || ""))
     );
     if (!confirmed) return fallback || null;
+    const saved = findSavedOrder(orderId);
+    if (saved && Number.isFinite(Number(saved.total)) && Number.isFinite(Number(confirmed.total))
+      && Number(saved.total) !== Number(confirmed.total)) {
+      return { ...(fallback || {}), statusPending: true, statusUnavailable: false };
+    }
     const result = { ...(fallback || {}), statusUnavailable: false };
     AUTHORITATIVE_ORDER_FIELDS.forEach((field) => {
       if (confirmed[field] !== undefined && confirmed[field] !== null) {
@@ -1799,7 +1805,7 @@ async function removeOutboxRequest(
     const summary = state.summaries.get(orderId) || null;
     const displayStatus = displayOrderStatus(orderId, summary);
     const status = card.querySelector(".saved-order-card-status") || document.createElement("strong");
-    status.className = displayStatus?.statusUnavailable
+    status.className = displayStatus?.statusUnavailable || displayStatus?.statusPending
       ? "saved-order-card-status"
       : `saved-order-card-status ${statusClass(effectiveOrderStatus(displayStatus))}`;
     status.textContent = displayStatus?.statusUnavailable
@@ -2574,7 +2580,9 @@ async function resumeOutboxForCurrentChat() {
 
   elements.chatStatus.textContent = statusLabel;
   elements.chatStatus.className =
-    `order-chat-status ${statusClass(status)}`;
+    displayStatus?.statusUnavailable || displayStatus?.statusPending
+      ? "order-chat-status"
+      : `order-chat-status ${statusClass(status)}`;
 }
 
   function renderChatPayload(payload, scrollToEnd = false) {
