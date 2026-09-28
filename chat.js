@@ -1741,12 +1741,32 @@ async function removeOutboxRequest(
   }
 
   function effectiveOrderStatusLabel(source) {
+    if (source?.statusUnavailable) return "СТАТУС НЕДОСТУПЕН";
     const status = effectiveOrderStatus(source);
     if (status === "debt") {
       const debt = Number(source?.debt) || 0;
       return `ДОПЛАТИТЬ ${debt.toLocaleString("ru-RU")}\u00A0₽`;
     }
     return source?.statusLabel || "НЕ ОПЛАЧЕНО";
+  }
+
+  function displayOrderStatus(orderIdValue, fallback) {
+    const orderId = normalizeOrderId(orderIdValue);
+    const authoritative = state.authoritativeOrders.get(orderId);
+    const summary = state.summaries.get(orderId);
+    if (summary?.statusUnavailable) return { ...(fallback || {}), statusUnavailable: true };
+    const confirmed = [authoritative, summary].find((source) =>
+      source && !source.statusUnavailable
+      && ["unpaid", "debt", "paid", "issued"].includes(String(source.status || ""))
+    );
+    if (!confirmed) return fallback || null;
+    const result = { ...(fallback || {}), statusUnavailable: false };
+    AUTHORITATIVE_ORDER_FIELDS.forEach((field) => {
+      if (confirmed[field] !== undefined && confirmed[field] !== null) {
+        result[field] = confirmed[field];
+      }
+    });
+    return result;
   }
 
   function formatChatTime(value) {
@@ -1777,16 +1797,14 @@ async function removeOutboxRequest(
   function appendSavedOrderChatControls(card, order) {
     const orderId = normalizeOrderId(order.orderId);
     const summary = state.summaries.get(orderId) || null;
-    const awaitingOrderSync = summary && Number.isFinite(Number(summary.total))
-      && Number(summary.total) !== Number(order.total);
+    const displayStatus = displayOrderStatus(orderId, summary);
     const status = card.querySelector(".saved-order-card-status") || document.createElement("strong");
-    status.className = summary?.statusUnavailable || awaitingOrderSync
+    status.className = displayStatus?.statusUnavailable
       ? "saved-order-card-status"
-      : `saved-order-card-status ${statusClass(effectiveOrderStatus(summary))}`;
-    status.textContent = summary?.statusUnavailable
+      : `saved-order-card-status ${statusClass(effectiveOrderStatus(displayStatus))}`;
+    status.textContent = displayStatus?.statusUnavailable
       ? "СТАТУС НЕДОСТУПЕН"
-      : awaitingOrderSync ? "СТАТУС ОБНОВЛЯЕТСЯ"
-      : summary ? effectiveOrderStatusLabel(summary) : "СТАТУС ОБНОВЛЯЕТСЯ";
+      : displayStatus ? effectiveOrderStatusLabel(displayStatus) : "СТАТУС ОБНОВЛЯЕТСЯ";
     if (!card.contains(status)) card.appendChild(status);
 
     const chatButton = document.createElement("button");
@@ -2361,7 +2379,11 @@ async function resumeOutboxForCurrentChat() {
       cached.messages = withoutPreActivationPaymentStatuses(cached.messages);
     }
     const verifiedAt = Number(state.accessVerification?.get(orderKey(normalizedOrderId))?.verifiedAt) || 0;
-    if (cached?.messages?.length && verifiedAt > 0 && Date.now() - verifiedAt <= 20000) {
+    const confirmedActiveSummary = state.summaries.get(normalizedOrderId);
+    if (cached?.messages?.length && verifiedAt > 0 && (
+      Date.now() - verifiedAt <= 20000
+      || (confirmedActiveSummary?.isActive === true && !confirmedActiveSummary.statusUnavailable)
+    )) {
       // Показываем только сохранённую историю; подтверждённый статус и отправка
       // появятся после проверки существования заказа в Sheets.
       cached = applyLatestKnownOrderStatus(cached, normalizedOrderId);
@@ -2546,8 +2568,9 @@ async function resumeOutboxForCurrentChat() {
 
   elements.chatCustomer.textContent = order.name || "";
 
-  const status = effectiveOrderStatus(order);
-  const statusLabel = effectiveOrderStatusLabel(order);
+  const displayStatus = displayOrderStatus(order.orderId, order);
+  const status = effectiveOrderStatus(displayStatus);
+  const statusLabel = effectiveOrderStatusLabel(displayStatus);
 
   elements.chatStatus.textContent = statusLabel;
   elements.chatStatus.className =
