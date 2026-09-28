@@ -1320,31 +1320,32 @@ body {
   overflow-y: auto;
   overflow-wrap: anywhere;
   margin: 0 0 12px;
-  padding: 12px 38px 12px 12px;
+  padding: 12px 56px 12px 12px;
   border: 1px solid #e5bb73;
   border-radius: 14px;
   background: #fff4db;
   color: #513800;
   font-size: 14px;
+  line-height: 1.4;
 }
 .cart-removal-notice[hidden] { display: none; }
 .cart-removal-notice ul { margin: 8px 0; padding-left: 20px; }
 .cart-removal-notice p { margin: 8px 0; }
 .cart-removal-notice button {
   position: absolute;
-  top: -1px;
-  right: 2px;
+  top: 4px;
+  right: 4px;
   display: grid;
   place-items: center;
-  width: 40px;
-  min-height: 40px;
+  width: 44px;
+  min-height: 44px;
   padding: 0;
   border: 0;
   border-radius: 10px;
   background: transparent;
   color: #513800;
   font: inherit;
-  font-size: 36px;
+  font-size: 28px;
   line-height: 1;
   font-weight: 700;
   cursor: pointer;
@@ -4732,8 +4733,7 @@ canvas {
   margin: 0 44px 6px 0;
   color: #0a8c68;
   font-size: 14px;
-  font-weight: 900;
-  letter-spacing: 0.4px;
+  font-weight: 800;
 }
 
 .share-channel-sheet h2,
@@ -5220,7 +5220,7 @@ canvas {
 }
 
 .order-chat-quota {
-  min-height: 12px;
+  min-height: 22px;
   padding: 4px 15px;
   background: #fffdf9;
   color: #95867b;
@@ -5339,8 +5339,8 @@ canvas {
   border-radius: 16px;
   background: #0d916d;
   color: #fff;
-  font-size: 18px;
-  font-weight: 850;
+  font-size: 20px;
+  font-weight: 750;
   box-shadow: 0 7px 16px rgba(13, 145, 109, .18);
 }
 
@@ -6277,7 +6277,7 @@ input:focus-visible,
   border-radius: 12px;
   background: #f7faf6;
   color: #65776b;
-  font-size: 14px;
+  font-size: 12.5px;
   line-height: 1.35;
 }
 
@@ -7167,7 +7167,7 @@ button:disabled,
 }
 
 .legal-links {
-  display: none;
+  display: flex;
   justify-content: center;
   box-sizing: border-box;
   width: 100%;
@@ -7181,7 +7181,6 @@ button:disabled,
 .legal-links .legal-footnote:visited,
 .legal-links .legal-footnote:hover,
 .legal-links .legal-footnote:focus-visible {
-  
   display: inline-flex;
   align-items: center;
   min-height: 14px;
