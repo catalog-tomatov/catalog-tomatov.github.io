@@ -375,7 +375,7 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
   };
 }
 
-export async function sendRealtimeText({ apiUrl, seasonId, orderId, chatToken, sender, text, messageId, accessVerifiedAt = 0 }) {
+export async function sendRealtimeText({ apiUrl, seasonId, orderId, chatToken, sender, text, messageId }) {
   const { db, user, firestoreSdk } = await getFirebaseContext();
   const safeClientMessageId = normalizeFirestorePart(messageId);
   const safeMessageId = normalizeFirestorePart(

@@ -2409,7 +2409,7 @@ async function resumeOutboxForCurrentChat() {
 
 } else if (
   order.contactChannel === "chat" &&
-  (earlyAccess?.activatedSubmissionId || state.summaries.get(normalizedOrderId)?.isActive === true)
+  (earlyAccess?.chatCreated === true || state.summaries.get(normalizedOrderId)?.isActive === true)
 ) {
   showChatLoading(true);
 } else {
@@ -3581,11 +3581,6 @@ function queuedDelivery(request) {
     let relayAcknowledged = null;
     if (!request.attachment && bridge?.sendText) {
       try {
-        const accessVerifiedAt = await verifyChatAccessForSend(
-          request.orderId,
-          request.chatToken,
-          false,
-        );
         result = await bridge.sendText({
           apiUrl: chatApiUrl(),
           seasonId: state.config?.seasonId || "",
@@ -3594,7 +3589,6 @@ function queuedDelivery(request) {
           sender: "client",
           text: request.text,
           messageId: request.clientMessageId || request.requestId,
-          accessVerifiedAt,
         });
         relayAcknowledged = result.relayAcknowledged || null;
       } catch (realtimeError) {
