@@ -2325,6 +2325,16 @@ async function resumeOutboxForCurrentChat() {
     if (cached && Array.isArray(cached.messages)) {
       cached.messages = withoutPreActivationPaymentStatuses(cached.messages);
     }
+    if (cached?.messages?.length) {
+      // Показываем только сохранённую историю; подтверждённый статус и отправка
+      // появятся после проверки существования заказа в Sheets.
+      state.current.payload = cached;
+      renderChatPayload(cached, !sameChat);
+      elements.chatComposer.hidden = true;
+      elements.chatStatus.textContent = "";
+      elements.chatStatus.className = "order-chat-status";
+      showChatLoading(false);
+    }
     const earlyAccess = await earlyAccessPromise;
     if (!state.current || normalizeOrderId(state.current.order?.orderId) !== normalizedOrderId) return;
     if (earlyAccess?.chatToken) {
