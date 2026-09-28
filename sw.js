@@ -8,7 +8,7 @@ const SHELL_FILES = [
   "./script.js?v=91",
   "./chat.js?v=20260928-sync15",
   "./firebase-config.js?v=1",
-  "./firebase-client.js?v=20260928-sync12",
+  "./firebase-client.js?v=20260928-sync13",
   "./manifest.json",
   "./chat-icon.png",
   "./max-icon.png",

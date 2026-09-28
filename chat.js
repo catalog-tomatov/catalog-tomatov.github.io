@@ -80,6 +80,8 @@ const CHAT_PAYMENT = {
     realtimeReady: new Set(),
     realtimeRelinking: new Set(),
     passiveMaxBootstrapAttempted: new Set(),
+    accessVerification: new Map(),
+    draftAccessPrimed: new Set(),
     initialized: false,
   };
 
@@ -298,6 +300,56 @@ const CHAT_PAYMENT = {
         state.realtimeConnections.delete(key);
       }
     }
+  }
+
+  const CHAT_SEND_VERIFY_MAX_AGE_MS = 10000;
+
+  function rememberChatAccessVerified(orderIdValue) {
+    const key = orderKey(orderIdValue);
+    const current = state.accessVerification.get(key) || {};
+    const verifiedAt = Date.now();
+    state.accessVerification.set(key, { ...current, verifiedAt, promise: null });
+    return verifiedAt;
+  }
+
+  function verifyChatAccessForSend(orderIdValue, chatToken, force = false) {
+    const orderId = normalizeOrderId(orderIdValue);
+    if (!orderId || !chatToken) return Promise.reject(new Error("Нет доступа к чату."));
+    const key = orderKey(orderId);
+    const current = state.accessVerification.get(key) || {};
+    if (current.promise) return current.promise;
+    if (!force && current.verifiedAt && Date.now() - current.verifiedAt <= CHAT_SEND_VERIFY_MAX_AGE_MS) {
+      return Promise.resolve(current.verifiedAt);
+    }
+    const promise = apiPost({
+      action: "chat_verify_access",
+      orderId,
+      chatToken,
+    }, 15000).then(() => rememberChatAccessVerified(orderId)).finally(() => {
+      const latest = state.accessVerification.get(key) || {};
+      if (latest.promise === promise) {
+        state.accessVerification.set(key, { ...latest, promise: null });
+      }
+    });
+    state.accessVerification.set(key, { ...current, promise });
+    return promise;
+  }
+
+  function primeCurrentChatAccessVerification() {
+    const current = state.current;
+    const orderId = normalizeOrderId(current?.order?.orderId);
+    const chatToken = current?.access?.chatToken || "";
+    if (!orderId || !chatToken || elements.chatComposer.hidden) return;
+    const key = orderKey(orderId);
+    if (state.draftAccessPrimed.has(key)) return;
+    state.draftAccessPrimed.add(key);
+    void verifyChatAccessForSend(orderId, chatToken, true).catch((error) => {
+      state.draftAccessPrimed.delete(key);
+      if (error?.code === "ORDER_NOT_FOUND") {
+        elements.sendChat.disabled = true;
+        setChatError("Заказ удалён из таблицы. Отправка недоступна.");
+      }
+    });
   }
 
   function findSavedOrder(orderId) {
@@ -803,6 +855,17 @@ const dbDelete = (store, key) =>
     const floor = Date.parse(readState.lastAt || "") || 0;
     const incoming = Date.parse(summary.lastAt || "") || 0;
     return incoming <= floor ? { ...summary, unread: 0 } : summary;
+  }
+
+  function rememberDurableReadFloor(orderIdValue, summary) {
+    if (!summary || Number(summary.unread || 0) !== 0 || !summary.lastAt) return;
+    const orderId = normalizeOrderId(orderIdValue);
+    const previous = state.readStates.get(orderId) || {};
+    const previousAt = Date.parse(previous.lastAt || "") || 0;
+    const nextAt = Date.parse(summary.lastAt || "") || 0;
+    if (nextAt > previousAt) {
+      state.readStates.set(orderId, { ...previous, lastAt: summary.lastAt });
+    }
   }
 
   // Статус заказа в Каталоге берём только из Apps Script / Google Sheets.
@@ -1530,6 +1593,7 @@ async function removeOutboxRequest(
         if (!key) return;
         returnedOrderIds.add(key);
         item.summary = suppressReadSummary(key, item.summary);
+        rememberDurableReadFloor(key, item.summary);
 
         // chat_summaries — подтверждённое состояние из Google Sheets.
         rememberAuthoritativeOrderState(key, item.order, item.summary);
@@ -2308,7 +2372,7 @@ async function resumeOutboxForCurrentChat() {
   };
     elements.chatTitle.textContent = `Чат по заказу ${normalizeOrderId(order.orderId)}`;
     elements.chatCustomer.textContent = order.name || "";
-    elements.chatStatus.textContent = "ОБНОВЛЯЕМ";
+    elements.chatStatus.textContent = "";
     elements.chatStatus.className = "order-chat-status";
     if (!sameChat) {
       elements.chatMessages.replaceChildren();
@@ -2326,9 +2390,8 @@ async function resumeOutboxForCurrentChat() {
       cached.messages = withoutPreActivationPaymentStatuses(cached.messages);
     }
     if (cached?.messages?.length) {
-      // Существующий чат показываем сразу из локального кэша. Статус берём из
-      // последнего уже подтверждённого состояния Каталога, а отправку оставляем
-      // заблокированной до проверки существования заказа в Sheets.
+      // Показываем только сохранённую историю; подтверждённый статус и отправка
+      // появятся после проверки существования заказа в Sheets.
       cached = applyLatestKnownOrderStatus(cached, normalizedOrderId);
       state.current.payload = cached;
       renderChatPayload(cached, !sameChat);
@@ -2339,7 +2402,8 @@ async function resumeOutboxForCurrentChat() {
     if (!state.current || normalizeOrderId(state.current.order?.orderId) !== normalizedOrderId) return;
     if (earlyAccess?.chatToken) {
       try {
-        await apiPost({ action: "chat_verify_access", orderId: order.orderId, chatToken: earlyAccess.chatToken }, 15000);
+        await verifyChatAccessForSend(order.orderId, earlyAccess.chatToken, true);
+        state.draftAccessPrimed.add(orderKey(normalizedOrderId));
       } catch (error) {
         state.current.payload = null;
         elements.chatMessages.replaceChildren();
@@ -2427,6 +2491,8 @@ async function resumeOutboxForCurrentChat() {
       );
       if (!state.current || normalizeOrderId(state.current.order?.orderId) !== normalizedOrderId) return;
       state.current.access = access;
+      rememberChatAccessVerified(normalizedOrderId);
+      state.draftAccessPrimed.add(orderKey(normalizedOrderId));
       // Cached history may have rendered before the token arrived. Redraw only
       // then: otherwise a photo without src stays unchanged after history sync.
       if (state.current.payload && elements.chatMessages.querySelector('.chat-attachment-image:not([src])')) {
@@ -2437,7 +2503,21 @@ async function resumeOutboxForCurrentChat() {
 
       // Firebase подключается параллельно и никогда не задерживает открытие
       // чата. Apps Script остаётся источником первого снимка и резервом.
-      void ensureRealtimeOrder(order, access).catch((realtimeError) => {
+      void ensureRealtimeOrder(order, access).then((connected) => {
+        if (!connected) return;
+        if (
+          state.current &&
+          normalizeOrderId(state.current.order?.orderId) === normalizedOrderId &&
+          !elements.chatModal.hidden
+        ) {
+          const bridge = realtimeBridge();
+          void bridge?.markRead({
+            seasonId: state.config?.seasonId || "",
+            orderId: normalizedOrderId,
+            viewer: "client",
+          }).catch((readError) => console.warn("Не удалось синхронизировать realtime-read", readError));
+        }
+      }).catch((realtimeError) => {
         console.warn("Firestore недоступен, оставлен резервный канал", realtimeError);
         startChatPolling();
       });
@@ -3526,6 +3606,11 @@ function queuedDelivery(request) {
     let relayAcknowledged = null;
     if (!request.attachment && bridge?.sendText) {
       try {
+        const accessVerifiedAt = await verifyChatAccessForSend(
+          request.orderId,
+          request.chatToken,
+          false,
+        );
         result = await bridge.sendText({
           apiUrl: chatApiUrl(),
           seasonId: state.config?.seasonId || "",
@@ -3534,6 +3619,7 @@ function queuedDelivery(request) {
           sender: "client",
           text: request.text,
           messageId: request.clientMessageId || request.requestId,
+          accessVerifiedAt,
         });
         relayAcknowledged = result.relayAcknowledged || null;
       } catch (realtimeError) {
@@ -3701,6 +3787,8 @@ function queuedDelivery(request) {
         );
       }
     }
+
+    state.draftAccessPrimed.delete(orderKey(orderId));
 
     // Удаляем outbox только после подтверждения сервера
     // и сохранения подтверждённого сообщения локально.
@@ -3927,13 +4015,17 @@ function queuedDelivery(request) {
     elements.chatInput?.focus();
   });
   elements.chatComposer?.addEventListener("submit", sendComposerMessage);
-  const activateChatFromTouch = () => activateChatPolling(
-    Date.now() - state.chatActivityAt >= CHAT_POLL_FAST_WINDOW,
-  );
+  const activateChatFromTouch = () => {
+    activateChatPolling(
+      Date.now() - state.chatActivityAt >= CHAT_POLL_FAST_WINDOW,
+    );
+    primeCurrentChatAccessVerification();
+  };
   elements.chatMessages?.addEventListener("pointerdown", activateChatFromTouch, { passive: true });
   elements.chatComposer?.addEventListener("pointerdown", activateChatFromTouch, { passive: true });
   elements.chatInput?.addEventListener("input", () => {
     activateChatPolling(false);
+    primeCurrentChatAccessVerification();
     elements.chatInput.style.height = "auto";
     elements.chatInput.style.height = `${Math.min(elements.chatInput.scrollHeight, 116)}px`;
   });
