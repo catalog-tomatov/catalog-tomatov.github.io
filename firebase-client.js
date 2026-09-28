@@ -278,11 +278,14 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
   let orderFromCache = true;
   let messages = [];
   let readAt = 0;
+  let lastEmittedSignature = "";
 
   const emit = () => {
     if (!orderData || typeof onData !== "function") return;
     const order = orderData.order || {};
     const visibleMessages = withoutPreActivationPaymentStatuses(messages);
+    const signature = JSON.stringify([orderData, visibleMessages, readAt, orderFromCache]);
+    if (signature === lastEmittedSignature) return;
     const unread = visibleMessages.filter((message) => (
       (viewer === "seller"
         ? message.sender === "client"
@@ -318,6 +321,7 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
       messages: visibleMessages,
       realtime: true,
     });
+    lastEmittedSignature = signature;
   };
 
   const fail = (error) => {

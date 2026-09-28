@@ -2524,6 +2524,10 @@ async function resumeOutboxForCurrentChat() {
       && existingKeys.length <= newKeys.length
       && existingKeys.every((key, index) => key === newKeys[index]
         && existingRows[index].dataset.chatMessageDate === chatDateKey(visibleMessages[index]?.createdAt));
+    const messagesChanged = !canAppend || existingRows.length !== visibleMessages.length
+      || existingRows.some((row, index) => (
+        row.dataset.chatMessageSignature !== chatMessageSignature(visibleMessages[index])
+      ));
 
     const appendMessage = (message, previousDate) => {
       const currentDate = chatDateKey(message.createdAt);
@@ -2555,7 +2559,7 @@ async function resumeOutboxForCurrentChat() {
     elements.chatMessages.dataset.orderId = orderId;
     elements.chatComposer.hidden = false;
     updateQuota(payload);
-    if (scrollToEnd || wasNearBottom) {
+    if (scrollToEnd || (wasNearBottom && messagesChanged)) {
       requestAnimationFrame(() => { elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight; });
     } else if (!canAppend) {
       requestAnimationFrame(() => { elements.chatMessages.scrollTop = previousScrollTop; });
@@ -3469,10 +3473,13 @@ function queuedDelivery(request) {
   }
 
   optimistic.delivery = queuedDelivery(request);
-  await cacheChat(
-    request.orderId,
-    payload
-  );
+  // Для текста outbox уже сохранён и восстановит сообщение после перезагрузки.
+  // Запись всей истории до отправки только задерживает Firestore и может
+  // позже перезаписать более свежий подтверждённый снимок. Вложения оставляем
+  // на прежнем пути: их локальное превью должно пережить загрузку.
+  if (request.attachment) {
+    await cacheChat(request.orderId, payload);
+  }
   if (state.current?.payload === payload) {
     renderChatPayload(payload, true);
   }
