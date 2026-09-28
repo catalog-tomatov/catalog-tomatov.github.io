@@ -393,17 +393,13 @@ export async function sendRealtimeText({ apiUrl, seasonId, orderId, chatToken, s
     activeSeasonId = String(linkResult?.seasonId || activeSeasonId);
     membership = membershipKey(activeSeasonId, orderId, user.uid);
   } else {
-    // chat.js normally starts this verification while the customer is typing.
-    // If the proof is absent/stale, keep the old blocking safety check so a
-    // deleted Sheets order can never rely only on a cached Firestore membership.
-    const verifiedAge = Date.now() - (Number(accessVerifiedAt) || 0);
-    if (verifiedAge < 0 || verifiedAge > 10000) {
-      await postJson(apiUrl, {
-        action: "chat_verify_access",
-        orderId,
-        chatToken,
-      }, 30000);
-    }
+    // A previous check can become stale immediately after a Sheets deletion.
+    // Keep the order-existence check on the actual send path.
+    await postJson(apiUrl, {
+      action: "chat_verify_access",
+      orderId,
+      chatToken,
+    }, 30000);
   }
 
   const message = {

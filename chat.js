@@ -79,7 +79,6 @@ const CHAT_PAYMENT = {
     realtimeConnections: new Map(),
     realtimeReady: new Set(),
     realtimeRelinking: new Set(),
-    passiveMaxBootstrapAttempted: new Set(),
     accessVerification: new Map(),
     draftAccessPrimed: new Set(),
     initialized: false,
@@ -1443,7 +1442,6 @@ async function removeOutboxRequest(
     }
     state.statusRefreshPromise = null;
     state.statusRefreshQueued = false;
-    state.passiveMaxBootstrapAttempted.clear();
     state.access.clear();
     state.chatCache.clear();
     state.attachmentBlobs.clear();
@@ -1588,10 +1586,15 @@ async function removeOutboxRequest(
       if (refreshSequence !== state.summaryRefreshSequence) return;
       const returnedSummaries = Array.isArray(result?.summaries) ? result.summaries : [];
       const returnedOrderIds = new Set();
+      const tokenOrderIds = new Set(entries.filter((entry) => entry.chatToken)
+        .map((entry) => normalizeOrderId(entry.orderId)));
       returnedSummaries.forEach((item) => {
         const key = normalizeOrderId(item.order?.orderId || item.summary?.orderId);
         if (!key) return;
         returnedOrderIds.add(key);
+        if (tokenOrderIds.has(key) && item.summary?.isActive === true) {
+          rememberChatAccessVerified(key);
+        }
         item.summary = suppressReadSummary(key, item.summary);
         rememberDurableReadFloor(key, item.summary);
 
@@ -1608,7 +1611,6 @@ async function removeOutboxRequest(
 
         updateSavedOrderFromSnapshot(key, item.order, result.seasonId);
       });
-      let passiveMaxBootstrapQueued = false;
       await Promise.all(returnedSummaries.map(async (item) => {
         const itemOrderId = item.order?.orderId || item.summary?.orderId;
         const cached = await readCachedChat(itemOrderId);
@@ -1621,21 +1623,10 @@ async function removeOutboxRequest(
         });
         const access = await getAccess(itemOrderId).catch(() => null);
         const savedOrder = findSavedOrder(itemOrderId);
-        if (access?.chatToken && savedOrder) {
+        if (access?.chatToken && savedOrder && item.summary?.isActive === true) {
           void ensureRealtimeOrder(savedOrder, access).catch((error) => {
             console.warn("Realtime-подписка заказа отложена", error);
           });
-        } else if (
-          savedOrder?.contactChannel === "max"
-          && !passiveMaxBootstrapQueued
-          && !state.passiveMaxBootstrapAttempted.has(normalizeOrderId(itemOrderId))
-        ) {
-          // Миграция уже сохранённых MAX-заказов: не чаще одного заказа за
-          // штатный цикл сводок и только одна попытка за сессию. Нового polling нет.
-          const bootstrapOrderId = normalizeOrderId(itemOrderId);
-          passiveMaxBootstrapQueued = true;
-          state.passiveMaxBootstrapAttempted.add(bootstrapOrderId);
-          void ensurePassiveMaxRealtime_(savedOrder);
         }
       }));
       await Promise.all(savedOrders.map((order) => (
@@ -1939,28 +1930,10 @@ async function removeOutboxRequest(
   if (order) {
     order.contactChannel = "max";
     persistSavedOrders();
-    // MAX остаётся внешним каналом общения, но получает техническую realtime-
-    // подписку на документ заказа. Запуск не блокирует отправку карточки в MAX.
-    void ensurePassiveMaxRealtime_(order);
   }
 
   hideOverlay(elements.shareModal);
   await shareOrderCardToMax_();
-}
-
-async function ensurePassiveMaxRealtime_(order) {
-  if (!order || order.contactChannel !== "max") return false;
-  try {
-    const access = await ensureChatAccess(order);
-    if (!access?.chatToken) return false;
-    await ensureRealtimeOrder(order, access);
-    return true;
-  } catch (error) {
-    // Не добавляем новый polling/таймер: штатный chat_summaries остаётся
-    // резервным каналом, если разовая привязка Firestore временно не удалась.
-    console.warn("Realtime-статус MAX отложен; оставлена штатная сверка", error);
-    return false;
-  }
 }
 
   function showChatLoading(value) {
@@ -1983,13 +1956,10 @@ async function ensurePassiveMaxRealtime_(order) {
 
   if (access?.chatToken) {
     const submissionId = latestSubmissionId(order);
-    const alreadyActive = Boolean(access.activatedSubmissionId) ||
-      state.summaries.get(normalizeOrderId(order.orderId))?.isActive === true;
     if (
       order.contactChannel === "chat" &&
       submissionId &&
-      !alreadyActive &&
-      access.activatedSubmissionId !== submissionId
+      (access.activatedSubmissionId !== submissionId || access.chatCreated !== true)
     ) {
       const result = await apiPost({
         action: "chat_activate",
@@ -2008,6 +1978,7 @@ async function ensurePassiveMaxRealtime_(order) {
       access = await putAccess(order.orderId, {
         activatedSubmissionId: submissionId,
         chatCreated: true,
+        contactChannel: "chat",
       });
       return { ...access, initialPayload: result };
     }
@@ -2389,13 +2360,16 @@ async function resumeOutboxForCurrentChat() {
     if (cached && Array.isArray(cached.messages)) {
       cached.messages = withoutPreActivationPaymentStatuses(cached.messages);
     }
-    if (cached?.messages?.length) {
+    const verifiedAt = Number(state.accessVerification?.get(orderKey(normalizedOrderId))?.verifiedAt) || 0;
+    if (cached?.messages?.length && verifiedAt > 0 && Date.now() - verifiedAt <= 20000) {
       // Показываем только сохранённую историю; подтверждённый статус и отправка
       // появятся после проверки существования заказа в Sheets.
       cached = applyLatestKnownOrderStatus(cached, normalizedOrderId);
       state.current.payload = cached;
       renderChatPayload(cached, !sameChat);
       elements.chatComposer.hidden = true;
+      elements.chatStatus.textContent = "";
+      elements.chatStatus.className = "order-chat-status";
       showChatLoading(false);
     }
     const earlyAccess = await earlyAccessPromise;
@@ -2503,7 +2477,8 @@ async function resumeOutboxForCurrentChat() {
 
       // Firebase подключается параллельно и никогда не задерживает открытие
       // чата. Apps Script остаётся источником первого снимка и резервом.
-      void ensureRealtimeOrder(order, access).then((connected) => {
+      void (access.chatCreated === true || state.summaries.get(normalizedOrderId)?.isActive === true
+        ? ensureRealtimeOrder(order, access) : Promise.resolve(false)).then((connected) => {
         if (!connected) return;
         if (
           state.current &&
@@ -3789,6 +3764,11 @@ function queuedDelivery(request) {
     }
 
     state.draftAccessPrimed.delete(orderKey(orderId));
+    if (!request.attachment && currentIsSameChat && state.current?.access?.chatToken) {
+      void ensureRealtimeOrder(state.current.order, state.current.access).catch((error) => {
+        console.warn("Realtime-подписка после первого сообщения отложена", error);
+      });
+    }
 
     // Удаляем outbox только после подтверждения сервера
     // и сохранения подтверждённого сообщения локально.
