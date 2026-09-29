@@ -4733,7 +4733,7 @@ canvas {
   margin: 0 44px 6px 0;
   color: #0a8c68;
   font-size: 14px;
-  font-weight: 800;
+  font-weight: 900;
 }
 
 .share-channel-sheet h2,
@@ -5031,6 +5031,8 @@ canvas {
   text-align: center;
   letter-spacing: .4px;
 }
+
+.order-chat-status[hidden] { display: none; }
 
 .order-chat-status.paid { background: #e8f5eb; color: #14744c; }
 .order-chat-status.debt { background: #fff2c7; color: #896100; }
@@ -5339,8 +5341,8 @@ canvas {
   border-radius: 16px;
   background: #0d916d;
   color: #fff;
-  font-size: 20px;
-  font-weight: 750;
+  font-size: 18px;
+  font-weight: 850;
   box-shadow: 0 7px 16px rgba(13, 145, 109, .18);
 }
 
