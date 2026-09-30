@@ -2649,6 +2649,8 @@ async function resumeOutboxForCurrentChat() {
     elements.chatComposer.hidden = false;
     updateQuota(payload);
     if (scrollToEnd || (wasNearBottom && messagesChanged)) {
+      // A redraw before the next frame must not capture the opening position as zero.
+      elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
       requestAnimationFrame(() => { elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight; });
     } else if (!canAppend) {
       requestAnimationFrame(() => { elements.chatMessages.scrollTop = previousScrollTop; });
