@@ -1320,13 +1320,13 @@ body {
   overflow-y: auto;
   overflow-wrap: anywhere;
   margin: 0 0 12px;
-  padding: 12px 56px 12px 12px;
+  padding: 12px 36px 12px 12px;
   border: 1px solid #e5bb73;
   border-radius: 14px;
   background: #fff4db;
   color: #513800;
   font-size: 14px;
-  line-height: 1.4;
+
 }
 .cart-removal-notice[hidden] { display: none; }
 .cart-removal-notice ul { margin: 8px 0; padding-left: 20px; }
@@ -1345,7 +1345,7 @@ body {
   background: transparent;
   color: #513800;
   font: inherit;
-  font-size: 28px;
+  font-size: 36px;
   line-height: 1;
   font-weight: 700;
   cursor: pointer;
