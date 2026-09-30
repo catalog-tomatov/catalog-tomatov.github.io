@@ -400,14 +400,6 @@ export async function sendRealtimeText({ apiUrl, seasonId, orderId, chatToken, s
     const linkResult = await linkRealtimeOrder({ apiUrl, orderId, chatToken });
     activeSeasonId = String(linkResult?.seasonId || activeSeasonId);
     membership = membershipKey(activeSeasonId, orderId, user.uid);
-  } else {
-    // A previous check can become stale immediately after a Sheets deletion.
-    // Keep the order-existence check on the actual send path.
-    await postJson(apiUrl, {
-      action: "chat_verify_access",
-      orderId,
-      chatToken,
-    }, 30000);
   }
 
   const message = {
