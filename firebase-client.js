@@ -150,11 +150,19 @@ export function getFirestoreDb() {
 }
 
 async function getFirebaseContext() {
-  const [{ db }, user, sdk] = await Promise.all([
+  const [{ db }, , sdk] = await Promise.all([
     initFirebase(),
     ensureAnonymousAuth(),
     loadFirebaseSdk(),
   ]);
+  // Auth can change in another tab after the initial sign-in promise resolved.
+  // Firestore uses the current SDK user, so tokens and authorUid must do so too.
+  const user = getFirebaseUser();
+  if (!user) {
+    const error = new Error("Firebase-вход изменился. Повторите отправку.");
+    error.code = "FIREBASE_AUTH_CHANGED";
+    throw error;
+  }
   return { db, user, firestoreSdk: sdk.firestoreSdk };
 }
 
@@ -439,6 +447,7 @@ export async function sendRealtimeText({ apiUrl, seasonId, orderId, chatToken, s
     const linkResult = await linkRealtimeOrder({ apiUrl, orderId, chatToken });
     activeSeasonId = String(linkResult?.seasonId || activeSeasonId);
     message.seasonId = normalizeFirestorePart(activeSeasonId);
+    message.authorUid = String(linkResult.uid || user.uid);
     messageRef = makeMessageRef(activeSeasonId);
 
     try {
@@ -452,7 +461,7 @@ export async function sendRealtimeText({ apiUrl, seasonId, orderId, chatToken, s
       const existingData = existing.exists() ? existing.data() : null;
       if (
         !existingData
-        || String(existingData.authorUid || "") !== user.uid
+        || String(existingData.authorUid || "") !== message.authorUid
         || String(existingData.messageId || "") !== safeMessageId
       ) {
         throw retryError;
