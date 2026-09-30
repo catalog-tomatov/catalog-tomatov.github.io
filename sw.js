@@ -4,7 +4,7 @@ const BADGE_COUNTER_URL = "./__catalog_badge_counter__";
 const SHELL_FILES = [
   "./",
   "./index.html",
-  "./style.css?v=71",
+  "./style.css?v=72",
   "./script.js?v=91",
   "./chat.js?v=20260930-sync19",
   "./firebase-config.js?v=1",
