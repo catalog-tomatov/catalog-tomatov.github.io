@@ -4105,12 +4105,14 @@ function queuedDelivery(request) {
     }
   });
 
-  // Push is the fast path. This 15-second cycle is an independent safety net
+  // MAX without an active chat has no realtime transport. Leave room for the
+  // fresh Sheets response inside the 15-second status delivery target.
+  // refreshChatSummaries reuses an outstanding request; cycles do not overlap.
   // for every saved order when Web Push or Firestore is unavailable.
   window.setInterval(() => {
     if (document.hidden || state.config?.seasonClosed || !savedOrders.length) return;
     void refreshChatSummaries();
-  }, 15000);
+  }, 5000);
 
   window.getOrderChatUnreadTotal_ = getOrderChatUnreadTotal;
   window.appendSavedOrderChatControls_ = appendSavedOrderChatControls;
