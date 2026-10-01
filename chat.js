@@ -1061,13 +1061,15 @@ const dbDelete = (store, key) =>
       firestoreState.sourceUpdatedAt || firestoreState.updatedAt || "",
     ) || 0;
     const previousFirestoreVersion = state.firestoreStatusVersions.get(orderId) || 0;
-    if (firestoreVersion > previousFirestoreVersion) {
-      state.firestoreStatusVersions.set(orderId, firestoreVersion);
-    }
     const confirmedRealtimeChange = String(firestoreState.source || "") === "appscript"
       && firestoreState.realtimeFromCache !== true
       && firestoreVersion > 0;
     if (confirmedRealtimeChange) {
+      // Message/read-state callbacks can replay the same order document.
+      // A replay must not discard the pending Sheets batch for all cards.
+      // Cached snapshots do not consume the first server confirmation.
+      if (firestoreVersion <= previousFirestoreVersion) return;
+      state.firestoreStatusVersions.set(orderId, firestoreVersion);
       // Этот документ записан Apps Script уже после SpreadsheetApp.flush().
       // Применяем его сразу; медленный chat_summaries остаётся только резервом.
       state.summaryRefreshSequence += 1;
