@@ -1529,6 +1529,28 @@ async function removeOutboxRequest(
     );
   }
 
+  async function forgetDeletedSavedOrder(order) {
+    const orderId = normalizeOrderId(order?.orderId);
+    if (!orderId) return;
+    const key = orderKey(orderId);
+    savedOrders = savedOrders.filter((item) => normalizeOrderId(item.orderId) !== orderId);
+    persistSavedOrders();
+    state.realtimeSubscriptions.get(key)?.();
+    state.realtimeSubscriptions.delete(key);
+    state.realtimeConnections.delete(key);
+    state.realtimeReady.delete(key);
+    state.accessVerification.delete(key);
+    state.access.delete(key);
+    state.chatCache.delete(key);
+    state.summaries.delete(orderId);
+    state.authoritativeOrders.delete(orderId);
+    state.authoritativeOrderVersions.delete(orderId);
+    state.firestoreStatusSignals.delete(orderId);
+    state.firestoreStatusVersions.delete(orderId);
+    if (normalizeOrderId(state.current?.order?.orderId) === orderId) closeOrderChat();
+    await Promise.all([dbDelete("access", key), dbDelete("chats", key)]).catch(() => {});
+  }
+
   async function preserveOrMarkUnavailableSummary(order, forceUnavailable = false) {
     const orderId = normalizeOrderId(order?.orderId);
     if (!orderId) return;
@@ -1572,7 +1594,10 @@ async function removeOutboxRequest(
       return;
     }
     const entries = [];
+    const requestedIdentities = new Map();
+    const savedIdentity = (order) => JSON.stringify([order?.submissionId || "", order?.createdAt || "", order?.phone || ""]);
     for (const order of savedOrders.slice(0, SAVED_ORDERS_LIMIT)) {
+      requestedIdentities.set(normalizeOrderId(order.orderId), savedIdentity(order));
       const access = await getAccess(order.orderId);
       entries.push({
         orderId: order.orderId,
@@ -1629,11 +1654,18 @@ async function removeOutboxRequest(
           });
         }
       }));
-      await Promise.all(savedOrders.map((order) => (
-        returnedOrderIds.has(normalizeOrderId(order.orderId))
-          ? null
-          : preserveOrMarkUnavailableSummary(order, true)
-      )));
+      const deletedOrderIds = new Set((Array.isArray(result.summaryFailures) ? result.summaryFailures : [])
+        .filter((failure) => failure.code === "ORDER_NOT_FOUND")
+        .map((failure) => normalizeOrderId(failure.orderId)));
+      await Promise.all(savedOrders.map((order) => {
+        const id = normalizeOrderId(order.orderId);
+        if (returnedOrderIds.has(id)) return null;
+        if (requestedIdentities.get(id) !== savedIdentity(order)) return null;
+        // Only an explicit Sheets tombstone removes a local saved card.
+        // Contention/timeouts preserve the last confirmed status.
+        return deletedOrderIds.has(id) ? forgetDeletedSavedOrder(order)
+          : preserveOrMarkUnavailableSummary(order);
+      }));
     } catch (error) {
       if (refreshSequence !== state.summaryRefreshSequence) return;
       if (error?.code !== "REQUEST_TIMEOUT") {
