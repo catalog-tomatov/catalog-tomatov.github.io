@@ -2143,7 +2143,7 @@ document.body.appendChild(blocker);
           orderId,
           title: document.getElementById("sheetTitle").textContent,
           mode: orderMode,
-          confirmedNewOrder: orderMode !== "addon",
+          confirmedNewOrder: orderMode !== "addon" && result.duplicate !== true,
           orderLabel: submittedOrderLabel,
           name,
           phone,

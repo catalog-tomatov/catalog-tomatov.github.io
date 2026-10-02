@@ -3410,6 +3410,9 @@ return card;
       return;
     }
     try {
+      // Count a watchdog attempt too: a GS failure must not hammer it every
+      // second while the independent Firebase channel remains healthy.
+      state.chatHistoryCheckedAt?.set(orderKey(orderId), Date.now());
       const payload = await refreshChatCache(orderId, pollingChat.access);
       if (state.current !== pollingChat) return;
       await showRefreshedChatIfOpen(orderId, payload, false);
