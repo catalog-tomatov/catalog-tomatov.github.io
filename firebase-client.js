@@ -313,7 +313,8 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
 
   const emit = () => {
     if (health.closed) return;
-    setHealth(Boolean(orderData && !orderFromCache && !messagesFromCache && navigator.onLine !== false));
+    setHealth(Boolean(orderData && !orderFromCache && !messagesFromCache && navigator.onLine !== false
+      && health.uid === getFirebaseUser()?.uid));
     if (!orderData || typeof onData !== "function") return;
     const order = orderData.order || {};
     const visibleMessages = withoutPreActivationPaymentStatuses(messages);

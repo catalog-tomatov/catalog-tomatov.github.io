@@ -378,7 +378,10 @@ const CHAT_PAYMENT = {
     const nextTotalItems = Number(order.itemCount) || 0;
     const nextName = typeof order.name === "string" && order.name.trim()
       ? order.name.trim() : saved.name;
+    const paymentFields = ["status", "statusLabel", "prepayment", "debt", "issued"];
+    const paymentChanged = paymentFields.some(field => order[field] != null && saved[field] !== order[field]);
     const changed =
+      paymentChanged ||
       saved.name !== nextName ||
       Number(saved.total) !== nextTotal ||
       Number(saved.totalItems) !== nextTotalItems ||
@@ -390,6 +393,7 @@ const CHAT_PAYMENT = {
     saved.total = nextTotal;
     saved.totalItems = nextTotalItems;
     saved.items = nextItems;
+    paymentFields.forEach(field => { if (order[field] != null) saved[field] = order[field]; });
     if (changed) persistSavedOrders();
     return changed;
   }
