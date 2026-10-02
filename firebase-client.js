@@ -12,6 +12,7 @@ let firebaseAuth = null;
 let firestoreDb = null;
 let firebaseUser = null;
 const linkedMemberships = new Set();
+const realtimeOrderHealth = new Map();
 
 function normalizeFirestorePart(value) {
   const result = String(value || "").trim().replace(/^#/, "");
@@ -273,6 +274,12 @@ function messagePreview(message) {
   return "Сообщение";
 }
 
+export function isRealtimeOrderHealthy(seasonId, orderId) {
+  const entry = realtimeOrderHealth.get(orderDocumentPath(seasonId, orderId));
+  return Boolean(entry?.healthy && !entry.closed && navigator.onLine !== false
+    && entry.uid === getFirebaseUser()?.uid);
+}
+
 export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData, onError }) {
   const { db, user, firestoreSdk } = await getFirebaseContext();
   const basePath = orderDocumentPath(seasonId, orderId);
@@ -284,11 +291,29 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
   const readRef = firestoreSdk.doc(db, `${basePath}/readStates/${user.uid}`);
   let orderData = null;
   let orderFromCache = true;
+  let messagesFromCache = true;
   let messages = [];
   let readAt = 0;
   let lastEmittedSignature = "";
+  const health = { uid: user.uid, healthy: false, closed: false };
+  realtimeOrderHealth.set(basePath, health);
+  const setHealth = (healthy) => {
+    if (health.closed || realtimeOrderHealth.get(basePath) !== health || health.healthy === healthy) return;
+    health.healthy = healthy;
+    window.dispatchEvent?.(new CustomEvent("tomato-chat-realtime-health", {
+      detail: { seasonId, orderId, healthy },
+    }));
+  };
+  const loseHealth = () => {
+    orderFromCache = true;
+    messagesFromCache = true;
+    setHealth(false);
+  };
+  window.addEventListener?.("offline", loseHealth);
 
   const emit = () => {
+    if (health.closed) return;
+    setHealth(Boolean(orderData && !orderFromCache && !messagesFromCache && navigator.onLine !== false));
     if (!orderData || typeof onData !== "function") return;
     const order = orderData.order || {};
     const visibleMessages = withoutPreActivationPaymentStatuses(messages);
@@ -333,19 +358,21 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
   };
 
   const fail = (error) => {
+    loseHealth();
     if (typeof onError === "function") onError(error);
   };
   const unsubscribers = [
-    firestoreSdk.onSnapshot(orderRef, (snapshot) => {
+    firestoreSdk.onSnapshot(orderRef, { includeMetadataChanges: true }, (snapshot) => {
       orderData = snapshot.exists() ? snapshot.data() : null;
-      orderFromCache = snapshot.metadata.fromCache;
+      orderFromCache = snapshot.metadata.fromCache || Boolean(snapshot.metadata.hasPendingWrites);
       emit();
     }, fail),
-    firestoreSdk.onSnapshot(messagesQuery, (snapshot) => {
+    firestoreSdk.onSnapshot(messagesQuery, { includeMetadataChanges: true }, (snapshot) => {
       messages = snapshot.docs.map(realtimeMessage);
+      messagesFromCache = snapshot.metadata.fromCache || Boolean(snapshot.metadata.hasPendingWrites);
       emit();
     }, fail),
-    firestoreSdk.onSnapshot(readRef, (snapshot) => {
+    firestoreSdk.onSnapshot(readRef, { includeMetadataChanges: true }, (snapshot) => {
       const data = snapshot.exists() ? snapshot.data() : {};
       readAt = Date.parse(firestoreDate(data.readAt, data.readAtIso)) || 0;
       emit();
@@ -360,15 +387,17 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
         firestoreSdk.getDoc(orderRef),
         firestoreSdk.getDocs(messagesQuery),
       ]);
-      if (!orderSnapshot.metadata.fromCache) {
+      orderFromCache = orderSnapshot.metadata.fromCache || Boolean(orderSnapshot.metadata.hasPendingWrites);
+      messagesFromCache = messageSnapshot.metadata.fromCache || Boolean(messageSnapshot.metadata.hasPendingWrites);
+      if (!orderFromCache) {
         orderData = orderSnapshot.exists() ? orderSnapshot.data() : null;
-        orderFromCache = false;
       }
-      if (!messageSnapshot.metadata.fromCache) {
+      if (!messagesFromCache) {
         messages = messageSnapshot.docs.map(realtimeMessage);
       }
       emit();
     } catch {
+      loseHealth();
       // onSnapshot остаётся основным каналом; опрос нужен только для сетей,
       // которые закрывают Firestore Listen, но пропускают обычные чтения.
     } finally {
@@ -378,6 +407,10 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
   void pollFromServer();
   const pollTimer = window.setInterval(() => void pollFromServer(), 1200);
   return () => {
+    setHealth(false);
+    health.closed = true;
+    if (realtimeOrderHealth.get(basePath) === health) realtimeOrderHealth.delete(basePath);
+    window.removeEventListener?.("offline", loseHealth);
     window.clearInterval(pollTimer);
     unsubscribers.forEach((unsubscribe) => unsubscribe());
   };
@@ -533,6 +566,7 @@ window.tomatoRealtime = Object.freeze({
   acknowledgeMessage: acknowledgeRealtimeMessage,
   markRead: markRealtimeRead,
   ready: getFirebaseContext,
+  isHealthy: isRealtimeOrderHealthy,
 });
 
 async function connectFirebaseInBackground() {

@@ -7,7 +7,7 @@
   const CHAT_CONFIG_KEY = "tomatoChatSeasonConfig";
   const CHAT_POLL_FAST_INTERVAL = 3000;
   const CHAT_POLL_IDLE_INTERVAL = 15000;
-  const CHAT_POLL_CONNECTED_INTERVAL = 10000;
+  const CHAT_POLL_CONNECTED_INTERVAL = 60000;
   const CHAT_POLL_FAST_WINDOW = 60000;
   const ORDER_STATUS_GS_INTERVAL = 30000;
   const ORDER_STATUS_GS_FALLBACK_INTERVAL = 5000;
@@ -66,6 +66,7 @@ const CHAT_PAYMENT = {
     shareOrderId: "",
     pollTimer: 0,
     chatActivityAt: 0,
+    chatHistoryCheckedAt: new Map(),
     sellerRevealTimer: 0,
     pushPromptTimer: 0,
     pushSyncPromise: null,
@@ -1369,6 +1370,7 @@ async function removeOutboxRequest(
       if (!access?.chatToken) throw new Error("Чат ещё не создан.");
       const cached = entry?.payload || await readCachedChat(normalized);
       const incoming = await fetchChatHistory(order, access, lastServerMessageId(cached));
+      state.chatHistoryCheckedAt?.set(key, Date.now());
 
       // Системная order_card создаётся Apps Script из свежего Sheets-снимка.
       // Применяем её вместе с delta-историей, чтобы карточка сохранённого заказа
@@ -1713,6 +1715,26 @@ async function removeOutboxRequest(
       void cacheChat(currentOrderId, correctedPayload);
       renderChatPayload(correctedPayload, false);
     }
+  }
+
+  function initializeSubmittedOrderStatus(saved) {
+    const orderId = normalizeOrderId(saved?.orderId);
+    if (!orderId || findSavedOrder(orderId) !== saved) return;
+    const seasonId = saved.seasonId || state.config?.seasonId || "";
+    const facts = { status: "unpaid", statusLabel: "НЕ ОПЛАЧЕНО",
+      total: Number(saved.total) || 0, prepayment: 0, debt: Number(saved.total) || 0, issued: false };
+    state.authoritativeOrders.delete(orderId);
+    state.authoritativeOrderVersions.delete(orderId);
+    state.orderStatusSourceVersions.delete(orderKey(orderId));
+    state.summaryRefreshSequence += 1;
+    rememberAuthoritativeOrderState(orderId, facts, facts);
+    state.summaries.set(orderId, { orderId, ...facts, chatCreated: false, isActive: false,
+      unread: 0, lastMessage: "", lastAt: "", statusUnavailable: false });
+    state.lastStatusSummaryAt = Date.now();
+    renderSavedOrdersSummary();
+    // The original successful submission ID authorizes the first status link.
+    // Do not pass the browser birth as if it were a confirmed Sheets date.
+    void ensureOrderStatusRealtime(saved, { createdAt: "" }, seasonId);
   }
 
   function orderStatusGsInterval() {
@@ -3344,12 +3366,19 @@ return card;
     return request;
   }
 
+  function isChatRealtimeHealthy(orderId) {
+    return navigator.onLine !== false && state.realtimeReady.has(orderKey(orderId))
+      && realtimeBridge()?.isHealthy?.(state.config?.seasonId || "", orderId) === true;
+  }
+
   function startChatPolling() {
     stopChatPolling();
     if (!state.current?.access?.chatToken || document.hidden || elements.chatModal.hidden) return;
     const recentlyActive = Date.now() - state.chatActivityAt < CHAT_POLL_FAST_WINDOW;
-    const interval = state.realtimeReady.has(orderKey(state.current.order?.orderId))
-      ? CHAT_POLL_CONNECTED_INTERVAL
+    const orderId = state.current.order?.orderId;
+    const sinceHistory = Date.now() - (state.chatHistoryCheckedAt?.get(orderKey(orderId)) ?? Date.now());
+    const interval = isChatRealtimeHealthy(orderId)
+      ? Math.max(1000, CHAT_POLL_CONNECTED_INTERVAL - sinceHistory)
       : recentlyActive ? CHAT_POLL_FAST_INTERVAL : CHAT_POLL_IDLE_INTERVAL;
     state.pollTimer = window.setTimeout(pollCurrentChat, interval);
   }
@@ -3358,7 +3387,7 @@ return card;
     const wasIdle = Date.now() - state.chatActivityAt >= CHAT_POLL_FAST_WINDOW;
     state.chatActivityAt = Date.now();
     if (!state.current?.access?.chatToken || document.hidden || elements.chatModal.hidden) return;
-    if (refreshNow) {
+    if (refreshNow && !isChatRealtimeHealthy(state.current.order?.orderId)) {
       stopChatPolling();
       void pollCurrentChat();
     } else if (wasIdle || !state.pollTimer) {
@@ -3375,6 +3404,11 @@ return card;
     if (!state.current?.access?.chatToken || document.hidden || elements.chatModal.hidden) return;
     const pollingChat = state.current;
     const orderId = pollingChat.order.orderId;
+    if (isChatRealtimeHealthy(orderId) && state.chatHistoryCheckedAt?.has(orderKey(orderId))
+      && Date.now() - state.chatHistoryCheckedAt.get(orderKey(orderId)) < CHAT_POLL_CONNECTED_INTERVAL) {
+      startChatPolling();
+      return;
+    }
     try {
       const payload = await refreshChatCache(orderId, pollingChat.access);
       if (state.current !== pollingChat) return;
@@ -4213,6 +4247,17 @@ function queuedDelivery(request) {
     }
   });
 
+  window.addEventListener("tomato-chat-realtime-health", (event) => {
+    if (!state.current || event.detail?.seasonId !== state.config?.seasonId
+      || normalizeOrderId(event.detail?.orderId) !== normalizeOrderId(state.current.order?.orderId)) return;
+    if (!event.detail.healthy) state.chatActivityAt = Date.now();
+    startChatPolling();
+  });
+  window.addEventListener("offline", () => {
+    state.chatActivityAt = Date.now();
+    startChatPolling();
+  });
+
   // Thirty-second Sheets insurance only after server-confirmed order status.
   // Cached/missing/failed realtime retains the existing five-second fallback.
   window.setInterval(() => {
@@ -4227,6 +4272,7 @@ function queuedDelivery(request) {
   window.createInfoRestoreCard_ = createInfoRestoreCard;
   window.openOrderChat_ = openOrderChat;
   window.refreshChatSummaries_ = refreshChatSummaries;
+  window.initializeSubmittedOrderStatus_ = initializeSubmittedOrderStatus;
 
   void initializeOrderChatClient();
 })();

@@ -257,6 +257,12 @@ function saveOrderSnapshot(snapshot) {
     requestIds: requestId ? [requestId] : [],
   };
 
+  const confirmedNewOrder = snapshot.confirmedNewOrder === true && snapshot.mode !== "addon";
+  if (confirmedNewOrder) {
+    Object.assign(nextOrder, { status: "unpaid", statusLabel: "НЕ ОПЛАЧЕНО",
+      prepayment: 0, debt: nextOrder.total, issued: false });
+  }
+
   if (existingIndex !== -1) {
     const existing = savedOrders[existingIndex];
     const requestIds = Array.isArray(existing.requestIds)
@@ -291,6 +297,9 @@ function saveOrderSnapshot(snapshot) {
   savedOrders = savedOrders.slice(0, SAVED_ORDERS_LIMIT);
   persistSavedOrders();
   renderSavedOrdersSummary();
+  if (confirmedNewOrder && typeof window.initializeSubmittedOrderStatus_ === "function") {
+    window.initializeSubmittedOrderStatus_(nextOrder);
+  }
   if (snapshot.mode === "addon" && typeof window.refreshChatSummaries_ === "function") {
     // The server has confirmed the add-on: refresh the payment status now,
     // instead of waiting for the next background polling interval.
@@ -2134,6 +2143,7 @@ document.body.appendChild(blocker);
           orderId,
           title: document.getElementById("sheetTitle").textContent,
           mode: orderMode,
+          confirmedNewOrder: orderMode !== "addon",
           orderLabel: submittedOrderLabel,
           name,
           phone,
@@ -3464,7 +3474,7 @@ function renderSavedOrdersList() {
 
     const status = document.createElement("strong");
     status.className = "saved-order-card-status";
-    status.textContent = "СТАТУС ОБНОВЛЯЕТСЯ";
+    status.textContent = order.statusLabel || "СТАТУС ОБНОВЛЯЕТСЯ";
 
     main.append(title, total);
     sub.append(date, status);
