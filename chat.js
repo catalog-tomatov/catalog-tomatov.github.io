@@ -1605,11 +1605,12 @@ async function removeOutboxRequest(
         orderId: order.orderId,
         phone: order.phone,
         chatToken: access?.chatToken || "",
+        includeChatMetadata: !state.realtimeReady?.has(orderKey(order.orderId)),
       });
     }
 
     try {
-      const result = await apiPost({ action: "chat_summaries", orders: entries }, 30000);
+      const result = await apiPost({ action: "chat_summaries", orders: entries, orderFactsOnly: true }, 30000);
       if (refreshSequence !== state.summaryRefreshSequence) return;
       const returnedSummaries = Array.isArray(result?.summaries) ? result.summaries : [];
       const returnedOrderIds = new Set();
@@ -1621,6 +1622,12 @@ async function removeOutboxRequest(
         returnedOrderIds.add(key);
         if (tokenOrderIds.has(key) && item.summary?.isActive === true) {
           rememberChatAccessVerified(key);
+        }
+        if (item.summaryMode === "order_facts") {
+          const previous = state.summaries.get(key) || {};
+          ["unread", "lastMessage", "lastAt", "attachmentBytes", "attachmentRemainingBytes"].forEach((field) => {
+            if (Object.prototype.hasOwnProperty.call(previous, field)) item.summary[field] = previous[field];
+          });
         }
         item.summary = suppressReadSummary(key, item.summary);
         rememberDurableReadFloor(key, item.summary);
@@ -3272,7 +3279,7 @@ return card;
 
   function startChatPolling() {
     stopChatPolling();
-    if (!state.current || document.hidden || elements.chatModal.hidden) return;
+    if (!state.current?.access?.chatToken || document.hidden || elements.chatModal.hidden) return;
     const recentlyActive = Date.now() - state.chatActivityAt < CHAT_POLL_FAST_WINDOW;
     const interval = state.realtimeReady.has(orderKey(state.current.order?.orderId))
       ? CHAT_POLL_CONNECTED_INTERVAL
@@ -3283,7 +3290,7 @@ return card;
   function activateChatPolling(refreshNow = false) {
     const wasIdle = Date.now() - state.chatActivityAt >= CHAT_POLL_FAST_WINDOW;
     state.chatActivityAt = Date.now();
-    if (!state.current || document.hidden || elements.chatModal.hidden) return;
+    if (!state.current?.access?.chatToken || document.hidden || elements.chatModal.hidden) return;
     if (refreshNow) {
       stopChatPolling();
       void pollCurrentChat();
@@ -3298,7 +3305,7 @@ return card;
   }
 
   async function pollCurrentChat() {
-    if (!state.current || document.hidden || elements.chatModal.hidden) return;
+    if (!state.current?.access?.chatToken || document.hidden || elements.chatModal.hidden) return;
     const pollingChat = state.current;
     const orderId = pollingChat.order.orderId;
     try {
