@@ -9,6 +9,8 @@
   const CHAT_POLL_IDLE_INTERVAL = 15000;
   const CHAT_POLL_CONNECTED_INTERVAL = 10000;
   const CHAT_POLL_FAST_WINDOW = 60000;
+  const ORDER_STATUS_GS_INTERVAL = 30000;
+  const ORDER_STATUS_GS_FALLBACK_INTERVAL = 5000;
   const CHAT_PUSH_SNOOZE_KEY = "tomatoChatPushSnoozedUntil";
   const CHAT_PUSH_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
   const CUSTOMER_PUSH_API_BASE = "https://pult-sezona.asahi-higashi.chatgpt.site/api/push/customer";
@@ -53,6 +55,8 @@ const CHAT_PAYMENT = {
     summaryRefreshSequence: 0,
     summariesRefreshPromise: null,
     summariesRefreshQueued: false,
+    lastStatusSummaryAt: 0,
+    orderStatusSourceVersions: new Map(),
     firestoreStatusSignals: new Map(),
     firestoreStatusVersions: new Map(),
     access: new Map(),
@@ -150,6 +154,7 @@ const CHAT_PAYMENT = {
   }
 
   function stopRealtimeSubscriptions() {
+    window.tomatoOrderStatus?.closeAll();
     state.realtimeSubscriptions.forEach((unsubscribe) => {
       try { unsubscribe(); } catch (error) { /* best effort */ }
     });
@@ -1535,6 +1540,8 @@ async function removeOutboxRequest(
     const orderId = normalizeOrderId(order?.orderId);
     if (!orderId) return;
     const key = orderKey(orderId);
+    globalThis.window?.tomatoOrderStatus?.close(state.config?.seasonId || "", orderId);
+    state.orderStatusSourceVersions?.delete(key);
     savedOrders = savedOrders.filter((item) => normalizeOrderId(item.orderId) !== orderId);
     persistSavedOrders();
     state.realtimeSubscriptions.get(key)?.();
@@ -1590,6 +1597,7 @@ async function removeOutboxRequest(
 
   async function refreshChatSummariesNow() {
     const refreshSequence = ++state.summaryRefreshSequence;
+    state.lastStatusSummaryAt = Date.now();
     if (!state.config || state.config.seasonClosed || !savedOrders.length) {
       state.summaries.clear();
       updateAppBadge();
@@ -1657,6 +1665,9 @@ async function removeOutboxRequest(
         });
         const access = await getAccess(itemOrderId).catch(() => null);
         const savedOrder = findSavedOrder(itemOrderId);
+        if (savedOrder && typeof ensureOrderStatusRealtime === "function") {
+          void ensureOrderStatusRealtime(savedOrder, item.order, result.seasonId, access);
+        }
         if (access?.chatToken && savedOrder && item.summary?.isActive === true) {
           void ensureRealtimeOrder(savedOrder, access).catch((error) => {
             console.warn("Realtime-подписка заказа отложена", error);
@@ -1702,6 +1713,62 @@ async function removeOutboxRequest(
       void cacheChat(currentOrderId, correctedPayload);
       renderChatPayload(correctedPayload, false);
     }
+  }
+
+  function orderStatusGsInterval() {
+    const bridge = window.tomatoOrderStatus;
+    return savedOrders.length && savedOrders.every(order =>
+      bridge?.isHealthy(state.config?.seasonId || "", order.orderId))
+      ? ORDER_STATUS_GS_INTERVAL : ORDER_STATUS_GS_FALLBACK_INTERVAL;
+  }
+
+  async function ensureOrderStatusRealtime(saved, confirmedOrder, seasonId, access = null) {
+    const bridge = window.tomatoOrderStatus;
+    if (!bridge || !confirmedOrder || !saved.phone || !seasonId) return false;
+    const orderId = normalizeOrderId(saved.orderId);
+    const key = orderKey(orderId);
+    const sheetVersion = Number(String(confirmedOrder.revision || "").split("|")[0]) || 0;
+    state.orderStatusSourceVersions.set(key, Math.max(sheetVersion, state.orderStatusSourceVersions.get(key) || 0));
+    const ownerIdentity = JSON.stringify([saved.phone, saved.createdAt, latestSubmissionId(saved)]);
+    return bridge.connect({ apiUrl: chatApiUrl(), seasonId, orderId,
+      phone: saved.phone, createdAt: confirmedOrder.createdAt || "",
+      requestId: Array.isArray(saved.requestIds) ? saved.requestIds[0] || "" : "",
+      chatToken: access?.chatToken || "",
+      ownerIdentity,
+      onData: facts => {
+        const currentSaved = findSavedOrder(orderId);
+        if (!currentSaved || JSON.stringify([currentSaved.phone, currentSaved.createdAt,
+          latestSubmissionId(currentSaved)]) !== ownerIdentity) return;
+        const currentPayload = state.current && normalizeOrderId(state.current.order?.orderId) === orderId
+          ? state.current.payload : null;
+        const cached = currentPayload || state.chatCache.get(key)?.payload;
+        const cachedVersion = Number(String(cached?.order?.revision || "").split("|")[0]) || 0;
+        if (facts.sourceVersion < Math.max(cachedVersion, state.orderStatusSourceVersions.get(key) || 0)) return;
+        state.orderStatusSourceVersions.set(key, facts.sourceVersion);
+        state.summaryRefreshSequence += 1;
+        // Compare server revisions above; the client wall clock is not proof
+        // that its cached status is newer than this confirmed Sheets state.
+        rememberAuthoritativeOrderState(orderId, facts, facts,
+          Math.max(facts.sourceVersion, state.authoritativeOrderVersions.get(orderId) || 0));
+        const summary = applyLatestKnownOrderStatus({ summary: state.summaries.get(orderId) || {} }, orderId).summary;
+        state.summaries.set(orderId, { ...summary, statusUnavailable: false });
+        // Status-only facts must not zero items, package count or chat metadata.
+        updateSavedOrderFromSnapshot(orderId, { ...currentSaved, ...facts,
+          itemCount: currentSaved.totalItems, items: currentSaved.items }, seasonId);
+        if (cached) {
+          const corrected = applyLatestKnownOrderStatus(cached, orderId);
+          void cacheChat(orderId, corrected);
+          if (currentPayload) {
+            state.current.payload = corrected;
+            if (!elements.chatModal.hidden) renderChatPayload(corrected, false);
+          }
+        }
+        renderSavedOrdersSummary();
+        if (document.getElementById("savedOrdersModal")?.style.display === "flex") renderSavedOrdersList();
+      },
+      onHealth: () => { /* the next scheduler tick chooses the safe interval */ },
+      onError: error => console.warn("Realtime статуса отложен; остаётся сверка GS", error),
+    });
   }
 
   function applyPushedOrderFacts(orderIdValue, pushedOrder, revisionValue) {
@@ -4146,12 +4213,11 @@ function queuedDelivery(request) {
     }
   });
 
-  // MAX without an active chat has no realtime transport. Leave room for the
-  // fresh Sheets response inside the 15-second status delivery target.
-  // refreshChatSummaries reuses an outstanding request; cycles do not overlap.
-  // for every saved order when Web Push or Firestore is unavailable.
+  // Thirty-second Sheets insurance only after server-confirmed order status.
+  // Cached/missing/failed realtime retains the existing five-second fallback.
   window.setInterval(() => {
     if (document.hidden || state.config?.seasonClosed || !savedOrders.length) return;
+    if (Date.now() - state.lastStatusSummaryAt < orderStatusGsInterval()) return;
     void refreshChatSummaries();
   }, 5000);
 

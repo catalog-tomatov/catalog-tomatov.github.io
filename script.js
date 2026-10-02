@@ -28,6 +28,7 @@ let catalogReady = false;
 let catalogLastSuccessfulRefreshAt = 0;
 let catalogRefreshPromise = null;
 let catalogAvailabilityRefreshPromise = null;
+let catalogRefreshDeferredForChat = false;
 let catalogLastLoadSource = "none";
 
 const SAVED_ORDERS_KEY = "savedOrders";
@@ -883,10 +884,19 @@ function getCatalogAvailabilityFromResponse(data) {
   );
 }
 
+function deferCatalogRefreshWhileChatOpen() {
+  const chatModal = document.getElementById("orderChatModal");
+  if (!chatModal || chatModal.hidden) return false;
+
+  catalogRefreshDeferredForChat = true;
+  return true;
+}
+
 async function refreshCatalogAvailabilityInBackground() {
   if (document.hidden || orderSending || !catalogReady || !products.length) {
     return null;
   }
+  if (deferCatalogRefreshWhileChatOpen()) return null;
   if (catalogRefreshPromise) return catalogRefreshPromise;
   if (catalogAvailabilityRefreshPromise) {
     return catalogAvailabilityRefreshPromise;
@@ -1704,6 +1714,10 @@ syncProductCardsFromCart();
 }
 
 function restoreCatalogAfterChat() {
+  if (catalogRefreshDeferredForChat) {
+    catalogRefreshDeferredForChat = false;
+    void refreshCatalogInBackground();
+  }
   if (!catalog || catalog.children.length || !products.length) return false;
 
   renderProducts();
@@ -4065,6 +4079,7 @@ async function refreshCatalogInBackground({ minimumAge = 0 } = {}) {
 
   if (document.hidden || orderSending) return null;
   if (!catalogReady && !seasonClosed) return null;
+  if (deferCatalogRefreshWhileChatOpen()) return null;
 
   const now = Date.now();
 
@@ -4687,7 +4702,7 @@ if (pendingSheetData) {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register("./sw.js?v=126");
+    navigator.serviceWorker.register("./sw.js?v=128");
   });
 }
 
