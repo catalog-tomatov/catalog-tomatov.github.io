@@ -114,6 +114,22 @@ function unlockBody() {
   document.body.style.overflow = "";
 }
 
+function formatPhoneInput(phone) {
+  let value = String(phone || "").replace(/\D/g, "");
+  if (value.length === 2 && value[1] === "7" && value[0] !== "7") {
+    value = "7" + value[0];
+  }
+  if (value.startsWith("8")) value = "7" + value.slice(1);
+  if (!value.startsWith("7")) value = "7" + value;
+  value = value.substring(0, 11);
+  let result = "+7";
+  if (value.length > 1) result += " (" + value.substring(1, 4);
+  if (value.length >= 5) result += ") " + value.substring(4, 7);
+  if (value.length >= 8) result += "-" + value.substring(7, 9);
+  if (value.length >= 10) result += "-" + value.substring(9, 11);
+  return result;
+}
+
 function formatPhone(phone) {
   const digits = phone.replace(/\D/g, "");
 
@@ -3807,45 +3823,7 @@ nameInput.addEventListener("input", () => {
 });
 
 phoneInput.addEventListener("input", () => {
-  let value = phoneInput.value.replace(/\D/g, "");
-
-  if (
-  value.length === 2 &&
-  value[1] === "7" &&
-  value[0] !== "7"
-) {
-  value = "7" + value[0];
-}
-
-  if (value.startsWith("8")) {
-    value = "7" + value.slice(1);
-  }
-
- 
-  if (!value.startsWith("7")) {
-    value = "7" + value;
-  }
-
-  value = value.substring(0, 11);
-
-  let result = "+7";
-
-  if (value.length > 1) {
-    result += " (" + value.substring(1, 4);
-  }
-
-  if (value.length >= 5) {
-    result += ") " + value.substring(4, 7);
-  }
-
-  if (value.length >= 8) {
-    result += "-" + value.substring(7, 9);
-  }
-
-  if (value.length >= 10) {
-    result += "-" + value.substring(9, 11);
-  }
-
+  const result = formatPhoneInput(phoneInput.value);
   phoneInput.value = result;
 
   const phoneRegex = /^\+7 \(\d{3}\) \d{3}-\d{2}-\d{2}$/;
@@ -4759,7 +4737,7 @@ if (pendingSheetData) {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register("./sw.js?v=130");
+    navigator.serviceWorker.register("./sw.js?v=131");
   });
 }
 

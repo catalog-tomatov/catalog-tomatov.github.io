@@ -4106,7 +4106,7 @@ function queuedDelivery(request) {
     button.append(icon, copy, action);
     button.addEventListener("click", () => {
       elements.restoreId.value = "";
-      elements.restorePhone.value = "";
+      elements.restorePhone.value = "+7";
       setInlineError(elements.restoreError, "");
       showOverlay(elements.restoreModal);
       setTimeout(() => elements.restoreId.focus(), 100);
@@ -4117,7 +4117,7 @@ function queuedDelivery(request) {
   async function restoreOrder() {
     const orderId = normalizeOrderId(elements.restoreId.value);
     const phone = elements.restorePhone.value.trim();
-    if (!orderId || !phone) {
+    if (!orderId || !/^\+7 \(\d{3}\) \d{3}-\d{2}-\d{2}$/.test(phone)) {
       setInlineError(elements.restoreError, "Введите номер заказа и полный телефон.");
       return;
     }
@@ -4196,6 +4196,10 @@ function queuedDelivery(request) {
   elements.closeRestore?.addEventListener("click", () => hideOverlay(elements.restoreModal));
   elements.restoreModal?.addEventListener("click", (event) => {
     if (event.target === elements.restoreModal) hideOverlay(elements.restoreModal);
+  });
+  elements.restorePhone?.addEventListener("input", () => {
+    elements.restorePhone.value = formatPhoneInput(elements.restorePhone.value);
+    setInlineError(elements.restoreError, "");
   });
   elements.restoreSubmit?.addEventListener("click", () => void restoreOrder());
   elements.closePush?.addEventListener("click", () => dismissChatPushPrompt(true));
