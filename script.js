@@ -12,7 +12,7 @@ const CATALOG_CACHE_KEY = "tomatoCatalogCacheV1";
 const CATALOG_CLIENT_LOOKUP_VERSION = "v2-2026-08-06";
 const CATALOG_CACHE_TTL = 60 * 1000;
 const CATALOG_VISIBLE_REFRESH_INTERVAL = 60 * 1000;
-const CATALOG_AVAILABILITY_REFRESH_INTERVAL = 10 * 1000;
+const CATALOG_AVAILABILITY_REFRESH_INTERVAL = 60 * 1000;
 const CATALOG_REQUEST_TIMEOUT = 30 * 1000;
 const CATALOG_AVAILABILITY_REQUEST_TIMEOUT = 6500;
 const CATALOG_RESUME_REFRESH_AFTER = 0;
@@ -28,6 +28,10 @@ let catalogReady = false;
 let catalogLastSuccessfulRefreshAt = 0;
 let catalogRefreshPromise = null;
 let catalogAvailabilityRefreshPromise = null;
+let catalogAvailabilityRefreshInterval = CATALOG_AVAILABILITY_REFRESH_INTERVAL;
+let catalogAvailabilityRefreshTimer = null;
+let catalogFullRefreshInterval = CATALOG_VISIBLE_REFRESH_INTERVAL;
+let catalogFullRefreshTimer = null;
 let catalogRefreshDeferredForChat = false;
 let catalogLastLoadSource = "none";
 
@@ -891,6 +895,49 @@ function getCatalogAvailabilityFromResponse(data) {
   return new Map(
     source.map((item) => [String(item.id), item.available === true]),
   );
+}
+
+function normalizeCatalogAvailabilityRefreshSeconds(value, minimum = 30) {
+  if ((typeof value !== "number" && typeof value !== "string") || String(value).trim() === "") return null;
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds < 0) return null;
+  return seconds === 0 ? 0 : Math.min(2147483, Math.max(minimum, Math.ceil(seconds)));
+}
+
+function scheduleCatalogAvailabilityRefresh() {
+  if (catalogAvailabilityRefreshTimer !== null) clearInterval(catalogAvailabilityRefreshTimer);
+  catalogAvailabilityRefreshTimer = null;
+  if (catalogAvailabilityRefreshInterval > 0) {
+    catalogAvailabilityRefreshTimer = setInterval(() => {
+      void refreshCatalogAvailabilityInBackground();
+    }, catalogAvailabilityRefreshInterval);
+  }
+}
+
+function configureCatalogAvailabilityRefresh(data) {
+  if (!data || !Object.prototype.hasOwnProperty.call(data, "availabilityRefreshSeconds")) return;
+  const seconds = normalizeCatalogAvailabilityRefreshSeconds(data.availabilityRefreshSeconds);
+  if (seconds === null || seconds * 1000 === catalogAvailabilityRefreshInterval) return;
+  catalogAvailabilityRefreshInterval = seconds * 1000;
+  scheduleCatalogAvailabilityRefresh();
+}
+
+function scheduleCatalogFullRefresh() {
+  if (catalogFullRefreshTimer !== null) clearInterval(catalogFullRefreshTimer);
+  catalogFullRefreshTimer = null;
+  if (catalogFullRefreshInterval > 0) {
+    catalogFullRefreshTimer = setInterval(() => {
+      void refreshCatalogInBackground();
+    }, catalogFullRefreshInterval);
+  }
+}
+
+function configureCatalogFullRefresh(data) {
+  if (!data || !Object.prototype.hasOwnProperty.call(data, "catalogFullRefreshSeconds")) return;
+  const seconds = normalizeCatalogAvailabilityRefreshSeconds(data.catalogFullRefreshSeconds, 60);
+  if (seconds === null || seconds * 1000 === catalogFullRefreshInterval) return;
+  catalogFullRefreshInterval = seconds * 1000;
+  scheduleCatalogFullRefresh();
 }
 
 function deferCatalogRefreshWhileChatOpen() {
@@ -3987,6 +4034,8 @@ loadCatalogData()
     if (!catalogProducts) {
       throw new Error("Сервер вернул некорректный каталог");
     }
+    configureCatalogAvailabilityRefresh(data);
+    configureCatalogFullRefresh(data);
 
     const initialSync = applyCatalogProducts(catalogProducts, { notify: true });
 
@@ -4108,6 +4157,8 @@ async function refreshCatalogInBackground({ minimumAge = 0 } = {}) {
 
     const nextProducts = getCatalogProductsFromResponse(data);
     if (!nextProducts) throw new Error("Сервер вернул некорректный каталог");
+    configureCatalogAvailabilityRefresh(data);
+    configureCatalogFullRefresh(data);
 
     const syncResult = applyCatalogProducts(nextProducts, {
       notify: true,
@@ -4136,13 +4187,9 @@ async function refreshCatalogInBackground({ minimumAge = 0 } = {}) {
   return catalogRefreshPromise;
 }
 
-setInterval(() => {
-  void refreshCatalogInBackground();
-}, CATALOG_VISIBLE_REFRESH_INTERVAL);
+scheduleCatalogFullRefresh();
 
-setInterval(() => {
-  void refreshCatalogAvailabilityInBackground();
-}, CATALOG_AVAILABILITY_REFRESH_INTERVAL);
+scheduleCatalogAvailabilityRefresh();
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
@@ -4712,7 +4759,7 @@ if (pendingSheetData) {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register("./sw.js?v=129");
+    navigator.serviceWorker.register("./sw.js?v=130");
   });
 }
 

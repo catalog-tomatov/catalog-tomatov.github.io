@@ -379,40 +379,13 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
       emit();
     }, fail),
   ];
-  let pollInFlight = false;
-  const pollFromServer = async () => {
-    if (pollInFlight) return;
-    pollInFlight = true;
-    try {
-      const [orderSnapshot, messageSnapshot] = await Promise.all([
-        firestoreSdk.getDoc(orderRef),
-        firestoreSdk.getDocs(messagesQuery),
-      ]);
-      orderFromCache = orderSnapshot.metadata.fromCache || Boolean(orderSnapshot.metadata.hasPendingWrites);
-      messagesFromCache = messageSnapshot.metadata.fromCache || Boolean(messageSnapshot.metadata.hasPendingWrites);
-      if (!orderFromCache) {
-        orderData = orderSnapshot.exists() ? orderSnapshot.data() : null;
-      }
-      if (!messagesFromCache) {
-        messages = messageSnapshot.docs.map(realtimeMessage);
-      }
-      emit();
-    } catch {
-      loseHealth();
-      // onSnapshot остаётся основным каналом; опрос нужен только для сетей,
-      // которые закрывают Firestore Listen, но пропускают обычные чтения.
-    } finally {
-      pollInFlight = false;
-    }
-  };
-  void pollFromServer();
-  const pollTimer = window.setInterval(() => void pollFromServer(), 1200);
+  // onSnapshot is the only Firestore read transport. Cached/error/offline
+  // snapshots release the existing GS history fallback; no parallel polling.
   return () => {
     setHealth(false);
     health.closed = true;
     if (realtimeOrderHealth.get(basePath) === health) realtimeOrderHealth.delete(basePath);
     window.removeEventListener?.("offline", loseHealth);
-    window.clearInterval(pollTimer);
     unsubscribers.forEach((unsubscribe) => unsubscribe());
   };
 }

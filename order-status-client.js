@@ -1,4 +1,4 @@
-import { initFirebase, ensureAnonymousAuth, getFirebaseUser } from "./firebase-client.js?v=20261002-sync17";
+import { initFirebase, ensureAnonymousAuth, getFirebaseUser } from "./firebase-client.js?v=20261003-sync18";
 
 const STATUS_SDK_URL = "https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js";
 const connections = new Map();
