@@ -75,7 +75,7 @@
   min-width: 42px; min-height: 42px; padding: 8px 12px; border: 1px solid #ecdcd1;
   border-radius: 13px; background: #fff4e7; color: #9b1801;
 }
-#pickerProgress { color: #786b62; font-size: 13px; }
+#pickerProgress { color: #786b62; font-size: 16px; }
 #pickerClose { margin-left: auto; font-size: 23px; }
 .seed-picker h2 { margin: 0 0 12px; color: #9b1801; font-size: 24px; line-height: 1.18; }
 .seed-picker h2:focus { outline: none; }
