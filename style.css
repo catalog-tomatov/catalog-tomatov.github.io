@@ -3355,6 +3355,7 @@ canvas {
 
 .contact-row {
   display: flex;
+  flex-wrap: wrap;
 
   align-items: center;
 
@@ -3366,11 +3367,13 @@ canvas {
 }
 
 .contact-row span {
-  white-space: nowrap;
+  max-width: 100%;
+  white-space: normal;
 }
 
 #copyPhoneBtn {
   background: none;
+  margin-left: auto;
 
   border: none;
 

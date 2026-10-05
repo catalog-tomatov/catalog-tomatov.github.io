@@ -1891,10 +1891,16 @@ function updateCart() {
 
 /* RENDER CART */
 
+function getItemsInCatalogOrder(items) {
+  return [...(items || [])].sort((a, b) =>
+    String(a.id).localeCompare(String(b.id), "ru", { numeric: true }),
+  );
+}
+
 function renderCart() {
   cartItems.innerHTML = "";
 
-  cart.forEach((item) => {
+  getItemsInCatalogOrder(cart).forEach((item) => {
     const div = document.createElement("div");
 
     div.className = "cart-item";
@@ -2251,7 +2257,7 @@ document.body.appendChild(blocker);
 
       sheetItems.innerHTML = "";
 
-      sheetItems.innerHTML = submittedItems
+      sheetItems.innerHTML = getItemsInCatalogOrder(submittedItems)
         .map((item) => {
           const shortTitle =
             item.title.length > 14
@@ -3045,6 +3051,7 @@ function getSavedOrderPngCacheKey(order) {
     : "";
 
   return [
+    "catalog-number-order-v1",
     order?.orderId || "",
     order?.createdAt || "",
     Number(order?.total) || 0,
@@ -3613,7 +3620,7 @@ function setSheetAddonSummary({
 }
 
 function fillSheetItems(items) {
-  sheetItems.innerHTML = (items || [])
+  sheetItems.innerHTML = getItemsInCatalogOrder(items)
     .map((item) => {
       const title = String(item.title || "");
       const shortTitle = title.length > 14 ? title.slice(0, 12) + ".." : title;
@@ -4704,7 +4711,7 @@ if (pendingSheetData) {
 
   document.getElementById("sheetTotalItems").textContent = data.totalItems;
 
-  sheetItems.innerHTML = data.items
+  sheetItems.innerHTML = getItemsInCatalogOrder(data.items)
     .map((item) => {
       const shortTitle =
         item.title.length > 14 ? item.title.slice(0, 12) + ".." : item.title;
@@ -4755,7 +4762,7 @@ if (pendingSheetData) {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register("./sw.js?v=132");
+    navigator.serviceWorker.register("./sw.js?v=133");
   });
 }
 
