@@ -148,10 +148,13 @@
   function createInfoCard(closeInfo, returnFocus) {
     const button = document.createElement('button');
     button.type = 'button'; button.className = 'info-picker-card';
+    const heading = document.createElement('span'); heading.className = 'info-picker-heading';
     const title = document.createElement('strong'); title.textContent = 'Подбери мне';
-    const copy = document.createElement('span');
+    const action = document.createElement('span'); action.className = 'info-picker-cta'; action.textContent = 'НАЖМИ';
+    heading.append(title, action);
+    const copy = document.createElement('span'); copy.className = 'info-picker-copy';
     copy.textContent = 'Если трудно выбрать, я помогу. Ответьте на три вопроса — подберём разные сорта для вашего набора.';
-    button.append(title, copy);
+    button.append(heading, copy);
     button.addEventListener('click', () => { closeInfo(); open(returnFocus); });
     return button;
   }
