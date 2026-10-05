@@ -31,6 +31,8 @@
   href="style.css?v=72"
   />
 
+<link rel="stylesheet" href="tomato-picker.css?v=1">
+
 <link rel="preload" as="image" href="./tomato/tomato-breath-loader.png" type="image/png" fetchpriority="high">
 <link rel="preload" as="image" href="./tomato/tomato-idle.png" type="image/png" fetchpriority="high">
 <link rel="preload" as="image" href="./tomato/info-tag.png" type="image/png">
@@ -1109,7 +1111,51 @@ content="summary_large_image">
 
 <button id="backToTopBtn" class="back-to-top" type="button" aria-label="Вернуться наверх">↑</button>
 
-<script src="script.js?v=96"></script>
+<dialog id="tomatoPicker" class="seed-picker" aria-labelledby="pickerTitle">
+  <header class="picker-header">
+    <button type="button" id="pickerBack" hidden>Назад</button>
+    <span id="pickerProgress">Шаг 1 из 3</span>
+    <button type="button" id="pickerClose" aria-label="Закрыть подбор">×</button>
+  </header>
+  <h2 id="pickerTitle" tabindex="-1">Где будете выращивать томаты?</h2>
+  <section data-picker-step="0">
+    <p class="picker-explanation">Выберите место выращивания — учтём его при подборе сортов.</p>
+    <div class="picker-choices" role="group" aria-label="Место выращивания">
+      <button type="button" data-picker-place="greenhouse" aria-pressed="false">Теплица</button>
+      <button type="button" data-picker-place="outdoor" aria-pressed="false">Открытый грунт</button>
+      <button type="button" data-picker-place="both" aria-pressed="false">И то и другое</button>
+    </div>
+  </section>
+  <section data-picker-step="1" hidden>
+    <p class="picker-explanation">Введите количество разных сортов томатов. Минимум — 10.</p>
+    <form id="pickerQuantityForm" novalidate>
+      <label for="pickerCount">Количество сортов</label>
+      <input id="pickerCount" type="number" inputmode="numeric" min="10" step="1" autocomplete="off" aria-describedby="pickerCapacity pickerError">
+      <p id="pickerCapacity"></p>
+      <button type="submit" id="pickerNext" class="picker-primary">Далее</button>
+    </form>
+  </section>
+  <section data-picker-step="2" hidden>
+    <p class="picker-explanation">Добавим один случайный доступный огурец.</p>
+    <div class="picker-choices picker-choices-two" role="group" aria-label="Добавить огурец">
+      <button type="button" data-picker-cucumber="yes" aria-pressed="false">Да</button>
+      <button type="button" data-picker-cucumber="no" aria-pressed="false">Нет</button>
+    </div>
+    <button type="button" id="pickerBuild" class="picker-primary" disabled>Подобрать набор</button>
+  </section>
+  <section data-picker-step="3" hidden>
+    <p id="pickerResultNote" class="picker-explanation"></p>
+    <div id="pickerProducts" class="picker-products"></div>
+    <div class="picker-total"><span>Итого</span><strong id="pickerTotal"></strong></div>
+    <button type="button" id="pickerAdd" class="picker-primary">Добавить набор в корзину</button>
+    <button type="button" id="pickerReroll" class="picker-secondary">Подобрать ещё раз</button>
+  </section>
+  <p id="pickerError" class="picker-error" role="alert" hidden></p>
+</dialog>
+
+<script src="script.js?v=97"></script>
+<script src="tomato-traits-2627.js?v=1"></script>
+<script src="tomato-picker.js?v=1"></script>
 <script src="chat.js?v=20261003-sync26"></script>
 
 </body>

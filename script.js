@@ -4372,7 +4372,11 @@ infoToggle.addEventListener("click", () => {
 
   fly.style.height = start.height + "px";
 
-  const closeBtn = document.createElement("div");
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.setAttribute("aria-label", "Закрыть важную информацию");
+  closeBtn.style.padding = "0";
+  closeBtn.style.border = "0";
 
   closeBtn.innerHTML = "✕";
 
@@ -4412,7 +4416,12 @@ infoToggle.addEventListener("click", () => {
 
   if (restoreBlock) document.body.appendChild(restoreBlock);
 
-  closeBtn.addEventListener("click", () => {
+  const pickerBlock = window.TomatoPicker.createInfoCard(closeInfo, infoToggle);
+  pickerBlock.style.width = Math.min(window.innerWidth * 0.92, 420) + "px";
+  pickerBlock.style.visibility = "hidden";
+  document.body.appendChild(pickerBlock);
+
+  function closeInfo() {
     fly.remove();
 
     closeBtn.remove();
@@ -4420,63 +4429,72 @@ infoToggle.addEventListener("click", () => {
     overlay.remove();
 
     restoreBlock?.remove();
+    pickerBlock.remove();
+    document.removeEventListener("keydown", handleInfoEscape);
+    window.removeEventListener("resize", positionInfo);
 
     infoToggle.style.opacity = "1";
 
     infoToggle.src = "./tomato/info-tag.png";
-  });
-
-  overlay.addEventListener("click", () => {
-    fly.remove();
-
-    closeBtn.remove();
-
-    overlay.remove();
-
-    restoreBlock?.remove();
-
-    infoToggle.style.opacity = "1";
-
-    infoToggle.src = "./tomato/info-tag.png";
-  });
+    infoToggle.focus({ preventScroll: true });
+  }
+  function handleInfoEscape(event) {
+    if (event.key === "Escape") closeInfo();
+  }
+  closeBtn.addEventListener("click", closeInfo);
+  overlay.addEventListener("click", closeInfo);
+  document.addEventListener("keydown", handleInfoEscape);
 
   fly.addEventListener("click", (e) => {
     e.stopPropagation();
   });
 
-  requestAnimationFrame(() => {
+  let infoLaidOut = false;
+  function positionInfo() {
     const ratio = 420 / 600;
-
+    const panelWidth = Math.min(window.innerWidth * 0.92, 420);
+    pickerBlock.style.width = panelWidth + "px";
+    const pickerHeight = pickerBlock.getBoundingClientRect().height;
+    if (restoreBlock) restoreBlock.style.width = panelWidth + "px";
+    const restoreHeight = restoreBlock ? restoreBlock.getBoundingClientRect().height + 8 : 0;
     const finalWidth = Math.min(
-      window.innerWidth * 0.92,
-      420,
-      Math.max(250, (window.innerHeight - (restoreBlock ? 128 : 42)) * ratio),
+      panelWidth,
+      Math.max(1, (window.innerHeight - pickerHeight - restoreHeight - 58) * ratio),
     );
 
     const finalHeight = finalWidth / ratio;
+    const stackHeight = pickerHeight + 42 + finalHeight + restoreHeight;
+    const stackTop = Math.max(8, (window.innerHeight - stackHeight) / 2);
+    const imageTop = stackTop + pickerHeight + 42;
+    pickerBlock.style.left = (window.innerWidth - panelWidth) / 2 + "px";
+    pickerBlock.style.top = stackTop + "px";
+    pickerBlock.style.visibility = "visible";
 
     closeBtn.style.left =
       (window.innerWidth - finalWidth) / 2 + finalWidth - 20 + "px";
 
-    closeBtn.style.top = (window.innerHeight - finalHeight) / 2 - 20 + "px";
+    closeBtn.style.top = imageTop - 34 + "px";
 
     fly.style.transition = "all .55s cubic-bezier(.22,1,.36,1)";
 
     fly.style.left = (window.innerWidth - finalWidth) / 2 + "px";
 
-    fly.style.top = (window.innerHeight - finalHeight) / 2 + "px";
+    fly.style.top = imageTop + "px";
 
     fly.style.width = finalWidth + "px";
 
     fly.style.height = finalHeight + "px";
 
     if (restoreBlock) {
-      restoreBlock.style.left = (window.innerWidth - finalWidth) / 2 + "px";
+      restoreBlock.style.left = (window.innerWidth - panelWidth) / 2 + "px";
       restoreBlock.style.top =
-        (window.innerHeight - finalHeight) / 2 + finalHeight + 7 + "px";
-      restoreBlock.style.width = finalWidth + "px";
+        imageTop + finalHeight + 8 + "px";
     }
-  });
+    if (!infoLaidOut) { pickerBlock.focus({ preventScroll: true }); infoLaidOut = true; }
+  }
+  requestAnimationFrame(positionInfo);
+  window.addEventListener("resize", positionInfo);
+  document.fonts?.ready.then(() => { if (fly.isConnected) positionInfo(); });
 });
 
 function showToast(text) {
@@ -4737,7 +4755,7 @@ if (pendingSheetData) {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register("./sw.js?v=131");
+    navigator.serviceWorker.register("./sw.js?v=132");
   });
 }
 
