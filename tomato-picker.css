@@ -2,7 +2,7 @@
   position: fixed;
   z-index: 100002;
   display: grid;
-  gap: 5px;
+  gap: 10px;
   box-sizing: border-box;
   padding: 13px 16px;
   border: 1px solid rgba(155, 24, 1, .18);
@@ -28,9 +28,9 @@
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  min-height: 38px;
+  min-height: 32px;
   box-sizing: border-box;
-  padding: 9px 15px;
+  padding: 6px 12px;
   border: 1px solid #de9691;
   border-radius: 13px;
   background: linear-gradient(180deg, #fff3f3 0%, #fbd4d4 48%, #f1b7b7 100%);
