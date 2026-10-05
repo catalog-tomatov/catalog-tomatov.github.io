@@ -5380,7 +5380,7 @@ canvas {
 .info-restore-card strong,
 .info-restore-card small { display: block; }
 .info-restore-card strong { font-size: 15px; }
-.info-restore-card small { margin-top: 3px; color: #786b62; font-size: 12px; }
+.info-restore-card small { margin-top: 3px; color: #786b62; font-size: 14px; }
 .info-restore-card b { color: #a61c0c; font-size: 15px; }
 
 @media (min-width: 431px) {

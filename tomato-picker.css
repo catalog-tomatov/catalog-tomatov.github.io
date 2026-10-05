@@ -14,7 +14,7 @@
   cursor: pointer;
 }
 .info-picker-card strong { color: #9b1801; font-size: 20px; }
-.info-picker-copy { font-size: 13px; line-height: 1.35; }
+.info-picker-copy { font-size: 14px; line-height: 1.35; }
 .info-picker-heading {
   display: flex;
   align-items: center;
