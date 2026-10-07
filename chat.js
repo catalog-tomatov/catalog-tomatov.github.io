@@ -80,6 +80,8 @@ const CHAT_PAYMENT = {
     createPromises: new Map(),
     readStates: new Map(),
     memoryOutbox: new Map(),
+    messageTransmissions: new Map(),
+    chatActivationRequests: new Map(),
     realtimeSubscriptions: new Map(),
     realtimeConnections: new Map(),
     realtimeReady: new Set(),
@@ -3744,6 +3746,67 @@ function queuedDelivery(request) {
   );
 }
 
+  async function sendCustomerChatRequest(request) {
+    const orderId = normalizeOrderId(request.orderId);
+    // Credential belongs to this order incarnation, not just its visible number.
+    const activationKey = `${orderKey(orderId)}|${request.chatToken}`;
+    const transmissionKey = `${activationKey}|${request.clientMessageId || request.requestId}`;
+    const running = state.messageTransmissions.get(transmissionKey);
+    if (running) return running;
+
+    const transmission = (async () => {
+      const activating = state.chatActivationRequests.get(activationKey);
+      if (activating) await activating;
+      const current = state.current && normalizeOrderId(state.current.order?.orderId) === orderId
+        && state.current.access?.chatToken === request.chatToken ? state.current : null;
+      const access = state.access.get(orderKey(orderId)) || current?.access;
+      const sameAccess = access?.chatToken === request.chatToken;
+      const active = sameAccess && (access.chatCreated === true
+        || current?.payload?.summary?.isActive === true
+        || state.summaries.get(orderId)?.isActive === true);
+      const passive = sameAccess && !active && access.contactChannel === "max";
+
+      if (passive) {
+        // GS saves the first customer message and activates the chat atomically.
+        // A technical MAX token cannot link the chat before that write succeeds.
+        const activation = (async () => {
+          const result = await apiPost(request, request.attachment ? 90000 : 30000);
+          if (result.message?.sender === "client") {
+            const latest = state.access.get(orderKey(orderId)) || current?.access;
+            if (latest?.chatToken === request.chatToken) {
+              const nextAccess = await putAccess(orderId, { chatCreated: true });
+              if (state.current && normalizeOrderId(state.current.order?.orderId) === orderId
+                && state.current.access?.chatToken === request.chatToken) {
+                state.current.access = nextAccess;
+              }
+            }
+          }
+          return result;
+        })();
+        state.chatActivationRequests.set(activationKey, activation);
+        try { return await activation; }
+        finally { state.chatActivationRequests.delete(activationKey); }
+      }
+
+      const bridge = realtimeBridge();
+      if (!request.attachment && bridge?.sendText) {
+        try {
+          return await bridge.sendText({
+            apiUrl: chatApiUrl(), seasonId: state.config?.seasonId || "",
+            orderId: request.orderId, chatToken: request.chatToken, sender: "client",
+            text: request.text, messageId: request.clientMessageId || request.requestId,
+          });
+        } catch (realtimeError) {
+          console.warn("Мгновенная отправка недоступна, использован серверный канал", realtimeError);
+        }
+      }
+      return apiPost(request, request.attachment ? 90000 : 30000);
+    })();
+    state.messageTransmissions.set(transmissionKey, transmission);
+    try { return await transmission; }
+    finally { state.messageTransmissions.delete(transmissionKey); }
+  }
+
   async function transmitOptimisticMessage(
   optimistic
 ) {
@@ -3763,31 +3826,8 @@ function queuedDelivery(request) {
   }
 
   try {
-    // Текст сначала пишем прямо в Firestore: Пульт получает его немедленно.
-    // Firebase-мост тем же stable clientMessageId сохраняет запись в Apps Script;
-    // при любой ошибке остаётся прежний надёжный серверный канал.
-    const bridge = realtimeBridge();
-    let result;
-    let relayAcknowledged = null;
-    if (!request.attachment && bridge?.sendText) {
-      try {
-        result = await bridge.sendText({
-          apiUrl: chatApiUrl(),
-          seasonId: state.config?.seasonId || "",
-          orderId: request.orderId,
-          chatToken: request.chatToken,
-          sender: "client",
-          text: request.text,
-          messageId: request.clientMessageId || request.requestId,
-        });
-        relayAcknowledged = result.relayAcknowledged || null;
-      } catch (realtimeError) {
-        console.warn("Мгновенная отправка недоступна, использован серверный канал", realtimeError);
-        result = await apiPost(request, 30000);
-      }
-    } else {
-      result = await apiPost(request, request.attachment ? 90000 : 30000);
-    }
+    const result = await sendCustomerChatRequest(request);
+    const relayAcknowledged = result.relayAcknowledged || null;
 
     let confirmedMessage =
       result.message;
