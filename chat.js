@@ -2782,7 +2782,9 @@ async function resumeOutboxForCurrentChat() {
       });
     }
     elements.chatMessages.dataset.orderId = orderId;
-    elements.chatComposer.hidden = false;
+    // The startup preview can render before access arrives. Do not offer a
+    // send that sendComposerMessage would silently ignore without its token.
+    elements.chatComposer.hidden = !state.current?.access?.chatToken;
     updateQuota(payload);
     if (scrollToEnd || (wasNearBottom && messagesChanged)) {
       // A redraw before the next frame must not capture the opening position as zero.
