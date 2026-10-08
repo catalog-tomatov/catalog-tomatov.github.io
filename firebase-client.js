@@ -247,7 +247,7 @@ function realtimeMessage(documentSnapshot) {
     attachment: data.attachment || null,
     snapshot: data.snapshot || null,
     clientMessageId: String(data.clientMessageId || ""),
-    createdAt: firestoreDate(data.createdAt, data.createdAtIso),
+    createdAt: Number.isFinite(Date.parse(data.createdAtIso)) ? String(data.createdAtIso) : firestoreDate(data.createdAt),
     eventKind: String(data.eventKind || ""),
     paymentStatus: String(data.paymentStatus || ""),
     paidAmount: Number(data.paidAmount) || 0,
@@ -317,7 +317,22 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
       && health.uid === getFirebaseUser()?.uid));
     if (!orderData || typeof onData !== "function") return;
     const order = orderData.order || {};
-    const visibleMessages = withoutPreActivationPaymentStatuses(messages);
+    const visibleMessages = withoutPreActivationPaymentStatuses(messages).slice()
+      .sort((left, right) => (Date.parse(left.createdAt) || 0) - (Date.parse(right.createdAt) || 0));
+    const payment = orderData.paymentMessage;
+    if (orderData.source === "appscript" && (orderData.chatCreated || orderData.isActive)
+      && payment?.messageId && payment.sender === "system" && payment.type === "system"
+      && String(payment.orderId).replace(/^#/, "") === String(orderId).replace(/^#/, "")
+      && String(payment.seasonId) === String(seasonId)
+      && payment.snapshot?.revision === order.revision && payment.snapshot?.status === order.status
+      && Number(payment.snapshot?.prepayment) === Number(order.prepayment)
+      && Number(payment.snapshot?.total) === Number(order.total)
+      && !visibleMessages.some(message => message.messageId === payment.messageId)) {
+      // Same archived event in the order snapshot: independent SDK callbacks
+      // cannot expose a completed payment without its confirmation bubble.
+      visibleMessages.push(realtimeMessage({ id: payment.messageId, data: () => payment }));
+      visibleMessages.sort((left, right) => (Date.parse(left.createdAt) || 0) - (Date.parse(right.createdAt) || 0));
+    }
     const signature = JSON.stringify([orderData, visibleMessages, readAt, orderFromCache]);
     if (signature === lastEmittedSignature) return;
     const unread = visibleMessages.filter((message) => (
@@ -390,7 +405,7 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
   };
 }
 
-export async function sendRealtimeText({ apiUrl, seasonId, orderId, chatToken, sender, text, messageId }) {
+export async function sendRealtimeText({ apiUrl, seasonId, orderId, chatToken, sender, text, messageId, createdAt = new Date().toISOString() }) {
   const { db, user, firestoreSdk } = await getFirebaseContext();
   const safeClientMessageId = normalizeFirestorePart(messageId);
   const safeMessageId = normalizeFirestorePart(
@@ -399,7 +414,7 @@ export async function sendRealtimeText({ apiUrl, seasonId, orderId, chatToken, s
       : `msg_${safeClientMessageId}`,
   );
   const safeOrderId = normalizeFirestorePart(orderId);
-  const createdAtIso = new Date().toISOString();
+  const createdAtIso = Number.isFinite(Date.parse(createdAt)) ? createdAt : new Date().toISOString();
 
   let activeSeasonId = String(seasonId || "");
   let membership = membershipKey(activeSeasonId, orderId, user.uid);

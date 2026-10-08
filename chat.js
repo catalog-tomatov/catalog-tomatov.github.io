@@ -7,9 +7,9 @@
   const CHAT_CONFIG_KEY = "tomatoChatSeasonConfig";
   const CHAT_POLL_FAST_INTERVAL = 3000;
   const CHAT_POLL_IDLE_INTERVAL = 15000;
-  const CHAT_POLL_CONNECTED_INTERVAL = 60000;
+  const CHAT_POLL_CONNECTED_INTERVAL = 300000;
   const CHAT_POLL_FAST_WINDOW = 60000;
-  const ORDER_STATUS_GS_INTERVAL = 60000;
+  const ORDER_STATUS_GS_INTERVAL = 300000;
   const ORDER_STATUS_GS_FALLBACK_INTERVAL = 5000;
   const CHAT_PUSH_SNOOZE_KEY = "tomatoChatPushSnoozedUntil";
   const CHAT_PUSH_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -1772,6 +1772,19 @@ async function removeOutboxRequest(
         const cached = currentPayload || state.chatCache.get(key)?.payload;
         const cachedVersion = Number(String(cached?.order?.revision || "").split("|")[0]) || 0;
         if (facts.sourceVersion < Math.max(cachedVersion, state.orderStatusSourceVersions.get(key) || 0)) return;
+        const previous = cached?.order;
+        const activeOpenChat = currentPayload && !elements.chatModal.hidden
+          && (cached.summary?.chatCreated || cached.summary?.isActive);
+        const paymentChanged = previous && ["paid", "unpaid"].includes(facts.status)
+          && (previous.status !== facts.status || Number(previous.prepayment) !== Number(facts.prepayment));
+        const paired = cached?.messages?.some(message => message.sender === "system"
+          && message.snapshot?.status === facts.status
+          && Number(message.snapshot?.prepayment) === Number(facts.prepayment)
+          && Number(String(message.snapshot?.revision || "").split("|")[0]) >= facts.sourceVersion);
+        // The chat's confirmed order snapshot carries the canonical message.
+        // A faster status-only listener waits for that same UI update; MAX and
+        // closed chats still receive their status immediately.
+        if (activeOpenChat && paymentChanged && !paired) return;
         state.orderStatusSourceVersions.set(key, facts.sourceVersion);
         state.summaryRefreshSequence += 1;
         // Compare server revisions above; the client wall clock is not proof
@@ -3798,6 +3811,7 @@ function queuedDelivery(request) {
             apiUrl: chatApiUrl(), seasonId: state.config?.seasonId || "",
             orderId: request.orderId, chatToken: request.chatToken, sender: "client",
             text: request.text, messageId: request.clientMessageId || request.requestId,
+            createdAt: request.createdAt,
           });
         } catch (realtimeError) {
           console.warn("Мгновенная отправка недоступна, использован серверный канал", realtimeError);
@@ -3819,6 +3833,8 @@ function queuedDelivery(request) {
   if (!request?.requestId) {
     return;
   }
+
+  request.createdAt = request.createdAt || optimistic.createdAt;
 
   const orderId =
     normalizeOrderId(request.orderId);
@@ -4312,7 +4328,7 @@ function queuedDelivery(request) {
     startChatPolling();
   });
 
-  // Thirty-second Sheets insurance only after server-confirmed order status.
+  // A five-minute Sheets watchdog after server-confirmed order status.
   // Cached/missing/failed realtime retains the existing five-second fallback.
   window.setInterval(() => {
     if (document.hidden || state.config?.seasonClosed || !savedOrders.length) return;
