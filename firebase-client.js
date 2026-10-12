@@ -266,6 +266,18 @@ function withoutPreActivationPaymentStatuses(messages) {
   ));
 }
 
+function isRealtimeNotificationCompanion(message) {
+  if (!message || message.sender !== "system") return false;
+  const orderId = String(message.orderId || "").trim().replace(/^#/, "");
+  const notificationId = message.snapshot && message.snapshot.notificationId;
+  const messageId = String(message.messageId || "");
+  return typeof notificationId === "string" && Boolean(messageId) &&
+    /^\d{5,}$/.test(orderId) && notificationId.length <= 160 &&
+    !/[^A-Za-z0-9._:-]/.test(notificationId) &&
+    new RegExp("^order_change_" + orderId + "_[A-Za-z0-9._:-]+$").test(notificationId) &&
+    notificationId !== messageId;
+}
+
 function messagePreview(message) {
   if (message.text) return message.text;
   if (message.type === "order_card") return "Карточка заказа";
@@ -338,7 +350,7 @@ export async function subscribeRealtimeOrder({ seasonId, orderId, viewer, onData
     const unread = visibleMessages.filter((message) => (
       (viewer === "seller"
         ? message.sender === "client"
-        : message.sender === "seller" || message.sender === "system")
+        : message.sender === "seller" || (message.sender === "system" && !isRealtimeNotificationCompanion(message)))
       && (Date.parse(message.createdAt || "") || 0) > readAt
     )).length;
     const last = visibleMessages.length ? visibleMessages[visibleMessages.length - 1] : null;

@@ -1314,7 +1314,7 @@ body {
 }
 .cart-removal-notice {
   position: relative;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-height: 0;
   max-height: 26dvh;
   overflow-y: auto;
