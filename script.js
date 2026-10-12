@@ -2485,6 +2485,7 @@ document.getElementById("createOrderBtn").onclick = async () => {
       foundClient = data;
 
       clientOrders = data.orders || [];
+      updateAddonOrderAvailability_();
 
       document.getElementById("clientFoundInfo").innerHTML = `
 
@@ -4529,6 +4530,16 @@ document.getElementById("copyPhoneBtn").onclick = async () => {
   showToast("📋 Номер скопирован");
 };
 
+function getAddonEligibleOrders_() {
+  return clientOrders.filter((order) => order && order.issued === false);
+}
+
+function updateAddonOrderAvailability_() {
+  const button = document.getElementById("addonOrderBtn");
+  button.hidden = getAddonEligibleOrders_().length === 0;
+  button.style.display = button.hidden ? "none" : "";
+}
+
 newOrderBtn.onclick = () => {
   selectedOrderId = null;
   selectedOrderColumn = null;
@@ -4564,11 +4575,16 @@ document.getElementById("createLabeledOrderBtn").onclick = () => {
 };
 
 document.getElementById("addonOrderBtn").onclick = () => {
+  const eligibleOrders = getAddonEligibleOrders_();
+  if (!eligibleOrders.length) {
+    showToast("Нет заказов для дозаказа. Оформите новый заказ.");
+    return;
+  }
   orderMode = "addon";
 
-  if (clientOrders.length <= 1) {
-    selectedOrderId = clientOrders[0]?.orderId || null;
-    selectedOrderColumn = clientOrders[0]?.column || null;
+  if (eligibleOrders.length === 1) {
+    selectedOrderId = eligibleOrders[0].orderId || null;
+    selectedOrderColumn = eligibleOrders[0].column || null;
     document.getElementById("clientModal").style.display = "none";
 
     submitOrder();
@@ -4592,7 +4608,7 @@ function showOrderSelectModal() {
 
   list.innerHTML = "";
 
-  clientOrders.forEach((order) => {
+  getAddonEligibleOrders_().forEach((order) => {
     const card = document.createElement("button");
 
     card.className = "order-select-card";
@@ -4625,6 +4641,10 @@ function showOrderSelectModal() {
     `;
 
     card.onclick = () => {
+      if (order.issued !== false) {
+        showToast("Этот заказ уже выдан. Оформите новый заказ.");
+        return;
+      }
       selectedOrderColumn = order.column;
       selectedOrderId = order.orderId || null;
 
