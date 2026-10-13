@@ -57,6 +57,8 @@ const CHAT_PAYMENT = {
     summariesRefreshQueued: false,
     lastStatusSummaryAt: 0,
     orderStatusSourceVersions: new Map(),
+    orderResetPromises: new Map(),
+    orderResetVersions: new Map(),
     firestoreStatusSignals: new Map(),
     firestoreStatusVersions: new Map(),
     access: new Map(),
@@ -508,9 +510,25 @@ const dbDelete = (store, key) =>
 
   async function getAccess(orderId) {
     const key = orderKey(orderId);
-    if (state.access.has(key)) return state.access.get(key);
+    const version = state.orderResetVersions?.get(key) || 0;
+    await state.orderResetPromises?.get(key);
+    if (version !== (state.orderResetVersions?.get(key) || 0)) return null;
     try {
-      const value = await dbGet("access", key);
+      const value = state.access.get(key) || await dbGet("access", key);
+      if (version !== (state.orderResetVersions?.get(key) || 0)) return null;
+      if (value) {
+        const phone = String(findSavedOrder(orderId)?.phone || "").replace(/\D/g, "");
+        const cached = value.phone ? null
+          : state.chatCache.get(key)?.payload || (await dbGet("chats", key))?.payload;
+        if (version !== (state.orderResetVersions?.get(key) || 0)) return null;
+        const cachedPhone = String(value.phone || cached?.order?.phone || "").replace(/\D/g, "");
+        if (phone && cachedPhone && phone !== cachedPhone) {
+          state.access.delete(key);
+          state.chatCache.delete(key);
+          state.summaries.delete(normalizeOrderId(orderId));
+          return null;
+        }
+      }
       if (value) state.access.set(key, value);
       return value || null;
     } catch (error) {
@@ -521,6 +539,7 @@ const dbDelete = (store, key) =>
 
   async function putAccess(orderId, fields) {
     const key = orderKey(orderId);
+    await state.orderResetPromises?.get(key);
     const current = state.access.get(key) || await getAccess(orderId) || { key, orderId: normalizeOrderId(orderId) };
     const next = { ...current, ...fields, key, seasonId: state.config?.seasonId || current.seasonId || "" };
     state.access.set(key, next);
@@ -742,6 +761,7 @@ const dbDelete = (store, key) =>
   async function cacheChat(orderId, payload) {
     const normalized = normalizeOrderId(orderId);
     const key = orderKey(normalized);
+    await state.orderResetPromises?.get(key);
     const currentEntry = state.chatCache.get(key) || {};
     state.chatCache.set(key, {
       ...currentEntry,
@@ -765,10 +785,24 @@ const dbDelete = (store, key) =>
 
   async function readCachedChat(orderId) {
     const key = orderKey(orderId);
+    const version = state.orderResetVersions?.get(key) || 0;
+    await state.orderResetPromises?.get(key);
+    if (version !== (state.orderResetVersions?.get(key) || 0)) return null;
+    const matchesOwner = (payload) => {
+      const phone = String(findSavedOrder(orderId)?.phone || "").replace(/\D/g, "");
+      const cachedPhone = String(payload?.order?.phone || "").replace(/\D/g, "");
+      return !phone || !cachedPhone || phone === cachedPhone;
+    };
     const memory = state.chatCache.get(key)?.payload;
-    if (memory) return memory;
+    if (memory && matchesOwner(memory)) return memory;
     try {
       const row = await dbGet("chats", key);
+      if (version !== (state.orderResetVersions?.get(key) || 0)) return null;
+      if (row?.payload && !matchesOwner(row.payload)) {
+        state.chatCache.delete(key);
+        state.summaries.delete(normalizeOrderId(orderId));
+        return null;
+      }
       if (row?.payload) {
         state.chatCache.set(key, {
           payload: row.payload,
@@ -1727,6 +1761,27 @@ async function removeOutboxRequest(
     const orderId = normalizeOrderId(saved?.orderId);
     if (!orderId || findSavedOrder(orderId) !== saved) return;
     const seasonId = saved.seasonId || state.config?.seasonId || "";
+    const key = orderKey(orderId, seasonId);
+    if (!state.orderResetVersions) state.orderResetVersions = new Map();
+    state.orderResetVersions.set(key, (state.orderResetVersions.get(key) || 0) + 1);
+    // A new receipt can reuse a cleared sheet's number. Its former local chat
+    // is a different order; add-ons and repeated receipts never enter here.
+    try { state.realtimeSubscriptions?.get(key)?.(); } catch { /* best effort */ }
+    if (typeof window !== "undefined") window.tomatoOrderStatus?.close(seasonId, orderId);
+    ["access", "chatCache", "realtimeSubscriptions", "realtimeConnections",
+      "realtimeReady", "realtimeRelinking", "accessVerification", "draftAccessPrimed",
+      "pushPendingAccess", "pushSyncSuccessAt", "pushSyncDeniedAt", "createPromises"]
+      .forEach(name => state[name]?.delete(key));
+    ["readStates", "firestoreStatusSignals", "firestoreStatusVersions"]
+      .forEach(name => state[name]?.delete(orderId));
+    if (!state.orderResetPromises) state.orderResetPromises = new Map();
+    const reset = typeof dbDelete === "function"
+      ? Promise.allSettled([dbDelete("access", key), dbDelete("chats", key)])
+      : Promise.resolve();
+    state.orderResetPromises.set(key, reset);
+    void reset.finally(() => {
+      if (state.orderResetPromises.get(key) === reset) state.orderResetPromises.delete(key);
+    });
     const facts = { status: "unpaid", statusLabel: "НЕ ОПЛАЧЕНО",
       total: Number(saved.total) || 0, prepayment: 0, debt: Number(saved.total) || 0, issued: false };
     state.authoritativeOrders.delete(orderId);
