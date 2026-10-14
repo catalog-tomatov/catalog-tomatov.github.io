@@ -761,7 +761,9 @@ const dbDelete = (store, key) =>
   async function cacheChat(orderId, payload) {
     const normalized = normalizeOrderId(orderId);
     const key = orderKey(normalized);
+    const version = state.orderResetVersions?.get(key) || 0;
     await state.orderResetPromises?.get(key);
+    if (version !== (state.orderResetVersions?.get(key) || 0)) return false;
     const currentEntry = state.chatCache.get(key) || {};
     state.chatCache.set(key, {
       ...currentEntry,
@@ -1401,6 +1403,7 @@ async function removeOutboxRequest(
   async function refreshChatCache(orderId, suppliedAccess = null) {
     const normalized = normalizeOrderId(orderId);
     const key = orderKey(normalized);
+    const version = state.orderResetVersions?.get(key) || 0;
     let entry = state.chatCache.get(key);
     if (entry?.request) return entry.request;
     const request = (async () => {
@@ -1409,7 +1412,9 @@ async function removeOutboxRequest(
       const access = suppliedAccess || await getAccess(normalized);
       if (!access?.chatToken) throw new Error("Чат ещё не создан.");
       const cached = entry?.payload || await readCachedChat(normalized);
+      if (version !== (state.orderResetVersions?.get(key) || 0)) return null;
       const incoming = await fetchChatHistory(order, access, lastServerMessageId(cached));
+      if (version !== (state.orderResetVersions?.get(key) || 0)) return null;
       state.chatHistoryCheckedAt?.set(key, Date.now());
 
       // Системная order_card создаётся Apps Script из свежего Sheets-снимка.
@@ -1419,13 +1424,14 @@ async function removeOutboxRequest(
       applyTrustedChatOrderSnapshots(normalized, incoming?.messages);
 
       const latest = state.chatCache.get(key)?.payload || await readCachedChat(normalized) || cached;
+      if (version !== (state.orderResetVersions?.get(key) || 0)) return null;
       let payload = mergeChatPayload(latest, incoming);
       payload.summary = suppressReadSummary(normalized, payload.summary);
       payload = applyLatestKnownOrderStatus(payload, normalized);
       commitChatSummary(normalized, payload);
       access.initialPayload = null;
       await cacheChat(normalized, payload);
-      return payload;
+      return version === (state.orderResetVersions?.get(key) || 0) ? payload : null;
     })();
     entry = entry || { payload: null, updatedAt: 0 };
     entry.request = request;
@@ -1440,7 +1446,7 @@ async function removeOutboxRequest(
 
   async function showRefreshedChatIfOpen(orderId, payload, scrollToEnd = false) {
     if (
-      !state.current
+      !payload || !state.current
       || normalizeOrderId(state.current.order?.orderId) !== normalizeOrderId(orderId)
       || elements.chatModal.hidden
     ) return false;
@@ -1578,6 +1584,38 @@ async function removeOutboxRequest(
     );
   }
 
+  async function forgetRejectedChatAccess(order, rejectedToken, expectedVersion) {
+    const orderId = normalizeOrderId(order?.orderId);
+    const key = orderKey(orderId);
+    if (!rejectedToken || expectedVersion !== (state.orderResetVersions.get(key) || 0)) return false;
+    const access = await getAccess(orderId);
+    if (expectedVersion !== (state.orderResetVersions.get(key) || 0)
+      || access?.chatToken !== rejectedToken || findSavedOrder(orderId) !== order) return false;
+
+    // A server denial is final for this token, unlike a timeout. Forget only
+    // its local incarnation; the next existing refresh reads facts by phone.
+    state.orderResetVersions.set(key, expectedVersion + 1);
+    try { state.realtimeSubscriptions.get(key)?.(); } catch { /* best effort */ }
+    window.tomatoOrderStatus?.close(state.config?.seasonId || "", orderId);
+    ["access", "chatCache", "realtimeSubscriptions", "realtimeConnections",
+      "realtimeReady", "realtimeRelinking", "accessVerification", "draftAccessPrimed",
+      "createPromises", "orderStatusSourceVersions"].forEach(name => state[name]?.delete(key));
+    state.pushPendingAccess.delete(orderId);
+    [state.pushSyncSuccessAt, state.pushSyncDeniedAt].forEach(entries => {
+      for (const pushKey of entries.keys()) {
+        if (pushKey.startsWith(`${orderId}:`)) entries.delete(pushKey);
+      }
+    });
+    ["summaries", "readStates", "authoritativeOrders", "authoritativeOrderVersions",
+      "firestoreStatusSignals", "firestoreStatusVersions"].forEach(name => state[name]?.delete(orderId));
+    const reset = Promise.allSettled([dbDelete("access", key), dbDelete("chats", key)]);
+    state.orderResetPromises.set(key, reset);
+    if (normalizeOrderId(state.current?.order?.orderId) === orderId) closeOrderChat(false);
+    await reset;
+    if (state.orderResetPromises.get(key) === reset) state.orderResetPromises.delete(key);
+    return true;
+  }
+
   async function forgetDeletedSavedOrder(order) {
     const orderId = normalizeOrderId(order?.orderId);
     if (!orderId) return;
@@ -1647,10 +1685,13 @@ async function removeOutboxRequest(
     }
     const entries = [];
     const requestedIdentities = new Map();
+    const requestedAccessVersions = new Map();
     const savedIdentity = (order) => JSON.stringify([order?.submissionId || "", order?.createdAt || "", order?.phone || ""]);
     for (const order of savedOrders.slice(0, SAVED_ORDERS_LIMIT)) {
       requestedIdentities.set(normalizeOrderId(order.orderId), savedIdentity(order));
       const access = await getAccess(order.orderId);
+      requestedAccessVersions.set(normalizeOrderId(order.orderId),
+        state.orderResetVersions?.get(orderKey(order.orderId)) || 0);
       entries.push({
         orderId: order.orderId,
         phone: order.phone,
@@ -1716,7 +1757,17 @@ async function removeOutboxRequest(
           });
         }
       }));
-      const deletedOrderIds = new Set((Array.isArray(result.summaryFailures) ? result.summaryFailures : [])
+      const summaryFailures = Array.isArray(result.summaryFailures) ? result.summaryFailures : [];
+      for (const failure of summaryFailures) {
+        if (failure.code !== "CHAT_ACCESS_DENIED") continue;
+        const id = normalizeOrderId(failure.orderId);
+        const order = findSavedOrder(id);
+        const entry = entries.find(item => normalizeOrderId(item.orderId) === id);
+        if (order && requestedIdentities.get(id) === savedIdentity(order)) {
+          await forgetRejectedChatAccess(order, entry?.chatToken, requestedAccessVersions.get(id));
+        }
+      }
+      const deletedOrderIds = new Set(summaryFailures
         .filter((failure) => failure.code === "ORDER_NOT_FOUND")
         .map((failure) => normalizeOrderId(failure.orderId)));
       await Promise.all(savedOrders.map((order) => {
@@ -2745,7 +2796,7 @@ async function resumeOutboxForCurrentChat() {
     }
   }
 
-  function closeOrderChat() {
+  function closeOrderChat(refreshSummary = true) {
     stopChatPolling();
     state.pollFailures = 0;
     if (state.sellerRevealTimer) {
@@ -2761,7 +2812,7 @@ async function resumeOutboxForCurrentChat() {
     if (typeof window.restoreCatalogAfterChat === "function") {
       window.restoreCatalogAfterChat();
     }
-    void refreshChatSummaries();
+    if (refreshSummary) void refreshChatSummaries();
   }
 
   function updateChatHeader(order) {

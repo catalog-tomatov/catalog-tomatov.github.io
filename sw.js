@@ -1,4 +1,4 @@
-const SHELL_CACHE = "catalog-shell-v159";
+const SHELL_CACHE = "catalog-shell-v160";
 const IMAGE_CACHE = "catalog-images-v5";
 const BADGE_COUNTER_URL = "./__catalog_badge_counter__";
 const SHELL_FILES = [
@@ -9,7 +9,7 @@ const SHELL_FILES = [
   "./tomato-picker.css?v=3",
   "./tomato-traits-2627.js?v=1",
   "./tomato-picker.js?v=2",
-  "./chat.js?v=20261013-sync30",
+  "./chat.js?v=20261014-sync31",
   "./firebase-config.js?v=1",
   "./firebase-client.js?v=20261012-sync20",
   "./order-status-client.js?v=20261003-status3",
