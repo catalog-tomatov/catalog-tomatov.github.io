@@ -28,7 +28,7 @@
 
   <link
     rel="stylesheet"
-  href="style.css?v=74"
+  href="style.css?v=75"
   />
 
 <link rel="stylesheet" href="tomato-picker.css?v=3">
@@ -322,8 +322,18 @@ content="summary_large_image">
 
 <div class="cart-box">
 
-  <div class="cart-title" id="cartTitle">
-    Корзина
+  <div class="cart-heading">
+    <div class="cart-title" id="cartTitle">Корзина</div>
+    <button id="clearCartBtn" class="cart-clear-btn" type="button" aria-label="Очистить корзину" aria-haspopup="dialog" aria-controls="clearCartDialog" title="Очистить корзину" hidden>
+      <svg viewBox="0 0 48 48" width="36" height="36" aria-hidden="true" fill="none">
+        <path d="M16 10V7a3 3 0 0 1 3-3h9a3 3 0 0 1 3 3v3" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+        <rect x="6" y="10" width="35" height="7" rx="2.5" fill="currentColor"/>
+        <path d="M9 19h29l-3 23H15a3 3 0 0 1-3-2.7L9 19Z" fill="currentColor"/>
+        <path d="m17 24 1.3 12M24 24v12M31 24l-1.3 12" stroke="#fffdfa" stroke-width="2.6" stroke-linecap="round"/>
+        <path d="m31 27 5 5 5-5 4 4-5 5 5 5-4 4-5-5-5 5-4-4 5-5-5-5Z" fill="#fbece6" stroke="#fbece6" stroke-width="5" stroke-linejoin="round"/>
+        <path d="m31 27 5 5 5-5 4 4-5 5 5 5-4 4-5-5-5 5-4-4 5-5-5-5Z" fill="#fffdfa" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/>
+      </svg>
+    </button>
   </div>
 
   <section id="cartRemovalNotice" class="cart-removal-notice" aria-label="Изменения корзины" hidden>
@@ -364,6 +374,15 @@ content="summary_large_image">
 
 
   </div>
+
+  <dialog id="clearCartDialog" class="cart-clear-dialog" role="alertdialog" aria-labelledby="clearCartTitle" aria-describedby="clearCartDescription">
+    <h2 id="clearCartTitle">Очистить корзину?</h2>
+    <p id="clearCartDescription">Все выбранные сорта будут удалены из корзины.</p>
+    <div class="cart-clear-actions">
+      <button id="clearCartNo" type="button" autofocus>Нет</button>
+      <button id="clearCartYes" type="button">Да</button>
+    </div>
+  </dialog>
 
   <!-- CHECKOUT -->
 
@@ -1153,9 +1172,9 @@ content="summary_large_image">
   <p id="pickerError" class="picker-error" role="alert" hidden></p>
 </dialog>
 
-<script src="script.js?v=100"></script>
-<script src="tomato-traits-2627.js?v=1"></script>
-<script src="tomato-picker.js?v=2"></script>
+<script src="script.js?v=101"></script>
+<script src="tomato-traits-2627.js?v=2"></script>
+<script src="tomato-picker.js?v=3"></script>
 <script src="chat.js?v=20261014-sync31"></script>
 
 </body>

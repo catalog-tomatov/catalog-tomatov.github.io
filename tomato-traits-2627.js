@@ -3,7 +3,7 @@
  */
 (function(root) {
 'use strict';
-const metadata={"season":"26/27","recordCount":283,"shares":{"hit":0.3,"new":0.3,"other":0.4},"roundingPriority":["new","other","hit"],"fallbackPriority":{"hit":["new","other"],"new":["other","hit"],"other":["new","hit"]},"cucumberNames":["Огурец JS122 F1","Огурец Ализар F1"],"minimumTomatoCount":10};
+const metadata={"season":"26/27","recordCount":286,"shares":{"hit":0.3,"new":0.3,"other":0.4},"roundingPriority":["new","other","hit"],"fallbackPriority":{"hit":["new","other"],"new":["other","hit"],"other":["new","hit"]},"cucumberNames":["Огурец JS122 F1","Огурец Ализар F1"],"minimumTomatoCount":10};
 const profiles=[
 {"key":"catalog:50","catalogId":50,"sowingId":null,"name":"Египетская Ладья","growingPlaces":["greenhouse","outdoor"],"maturity":"mid","growth":"indeterminate","habit":"tall","size":"large","colors":["pink"],"shapes":[],"uses":["fresh"],"patterns":[],"flavourNotes":["sweet"],"texture":["meaty","firm","juicy"],"extraTraits":[]},
 {"key":"catalog:161","catalogId":161,"sowingId":null,"name":"Круглая Реликвия Сальты","growingPlaces":["greenhouse","outdoor"],"maturity":"mid","growth":"determinate","habit":"compact","size":"large","colors":[],"shapes":["round"],"uses":[],"patterns":[],"flavourNotes":[],"texture":["meaty","juicy"],"extraTraits":[]},
@@ -287,13 +287,116 @@ const profiles=[
 {"key":"sowing:483","catalogId":null,"sowingId":483,"name":"Лучшее от Мэрилин Marilyn's Best","growingPlaces":["greenhouse","outdoor"],"maturity":"mid","growth":null,"habit":"tall","size":"large","colors":["red"],"shapes":["flat_round"],"uses":["fresh","sauce","juice"],"patterns":["ribbed"],"flavourNotes":[],"texture":["meaty","firm","juicy"],"extraTraits":[]},
 {"key":"sowing:484","catalogId":null,"sowingId":484,"name":"Богатырь Илюша","growingPlaces":["greenhouse","outdoor"],"maturity":"early","growth":null,"habit":"tall","size":"large","colors":["red"],"shapes":["round"],"uses":["fresh","juice"],"patterns":[],"flavourNotes":["sweet"],"texture":["meaty","firm","juicy"],"extraTraits":[]},
 {"key":"sowing:485","catalogId":null,"sowingId":485,"name":"Леонардо","growingPlaces":["greenhouse","outdoor"],"maturity":"mid","growth":null,"habit":"tall","size":"large","colors":["red"],"shapes":[],"uses":[],"patterns":[],"flavourNotes":[],"texture":["meaty","firm","few_seeds"],"extraTraits":[]},
-{"key":"sowing:486","catalogId":null,"sowingId":486,"name":"КУБИНСКИЙ САЛЯМИ ПУРПУРНЫЙ","growingPlaces":["greenhouse","outdoor"],"maturity":"mid","growth":null,"habit":"tall","size":"large","colors":["red","green","dark"],"shapes":["elongated"],"uses":["fresh","sauce"],"patterns":["striped"],"flavourNotes":["sweet"],"texture":["meaty","firm","juicy","few_seeds"],"extraTraits":[]}
+{"key":"sowing:486","catalogId":null,"sowingId":486,"name":"КУБИНСКИЙ САЛЯМИ ПУРПУРНЫЙ","growingPlaces":["greenhouse","outdoor"],"maturity":"mid","growth":null,"habit":"tall","size":"large","colors":["red","green","dark"],"shapes":["elongated"],"uses":["fresh","sauce"],"patterns":["striped"],"flavourNotes":["sweet"],"texture":["meaty","firm","juicy","few_seeds"],"extraTraits":[]},
+// Three additional profiles from the owner's current catalog descriptions.
+// An unspecified growing place is unrestricted; a stated preference for greenhouse is retained.
+{"key":"added:cancelmo","catalogId":null,"sowingId":null,"name":"Семейная Реликвия Канселмо","growingPlaces":["greenhouse","outdoor"],"maturity":"mid","growth":"indeterminate","habit":"tall","size":"large","colors":["pink"],"shapes":["heart"],"uses":["fresh"],"patterns":[],"flavourNotes":[],"texture":["few_seeds"],"extraTraits":[]},
+{"key":"added:orange-mennonite","catalogId":null,"sowingId":null,"name":"Оранжевый меннонит","growingPlaces":["greenhouse","outdoor"],"maturity":"early","growth":"indeterminate","habit":"tall","size":"large","colors":["orange","yellow"],"shapes":["round","flat_round"],"uses":["fresh"],"patterns":[],"flavourNotes":["sweet","fruity"],"texture":["meaty","juicy"],"extraTraits":[]},
+{"key":"added:volcano-heart","catalogId":null,"sowingId":null,"name":"Сердце вулкана","growingPlaces":["greenhouse"],"maturity":null,"growth":"indeterminate","habit":null,"size":"medium","colors":["dark","yellow","orange","red"],"shapes":[],"uses":["fresh"],"patterns":["striped","bicolor"],"flavourNotes":[],"texture":["juicy"],"extraTraits":[]}
 ];
+  // Reviewed against the "КАТАЛОГ" sheet on 22.11.2026.
+  // Actual catalog IDs are independent of the original sowing numbers.
+  const currentNewBindings = [
+    [13, "sowing:482", "Португальский Монстр Майкла"],
+    [19, "sowing:412", "Эрика из Австралии"],
+    [27, "sowing:431", "Огненный Тюрбан"],
+    [29, "sowing:434", "Розалинда де Бребу"],
+    [31, "sowing:455", "Аретшабалета Мозкорра"],
+    [34, "sowing:454", "Гном Монстр Сонроджо"],
+    [36, "sowing:429", "Гном Мечта Хейзи"],
+    [39, "sowing:402", "Дынный Ананас"],
+    [47, "added:cancelmo", "Семейная Реликвия Канселмо"],
+    [49, "sowing:483", "Лучшее от Мэрилин"],
+    [51, "sowing:447", "Груша Тихола Алмейра"],
+    [56, "sowing:404", "Огненный гребень"],
+    [59, "sowing:409", "Шарбоньер дю Берри"],
+    [62, "sowing:417", "Красное Сердце Танти Иванка"],
+    [63, "added:orange-mennonite", "Оранжевый меннонит"],
+    [67, "sowing:400", "Сердце Пустыни"],
+    [68, "sowing:468", "Кор де Беф"],
+    [74, "sowing:479", "Шоколадная Молния"],
+    [79, "sowing:465", "Дедушкино петушиное перышко"],
+    [81, "sowing:480", "Синица монахини"],
+    [82, "sowing:472", "Оранжевый Габбана"],
+    [88, "sowing:442", "Итальянский синий"],
+    [90, "sowing:410", "Басаджаун"],
+    [93, "sowing:444", "Помидоры дома Дублеш"],
+    [94, "sowing:441", "Тониман"],
+    [101, "sowing:413", "Гном PPI"],
+    [110, "sowing:451", "Коррез"],
+    [111, "sowing:473", "Сердце Иванушки"],
+    [113, "sowing:481", "Амос Коли"],
+    [114, "sowing:462", "BLACK CHERRY"],
+    [115, "sowing:443", "Большая Лулу"],
+    [120, "sowing:474", "Вишнёвый Сироп"],
+    [123, "added:volcano-heart", "Сердце вулкана"],
+    [127, "sowing:470", "Чинук"],
+    [133, "sowing:424", "Чупа-Чупс"],
+    [136, "sowing:421", "Сердце Дронеро"],
+    [138, "sowing:433", "Охровая Вуаль"],
+    [140, "sowing:478", "Трюфельное Сердце Нины"],
+    [141, "sowing:486", "Кубинский Салями"],
+    [143, "sowing:425", "Анави́н"],
+    [144, "sowing:419", "Розовый из Сьерра Арачена"],
+    [148, "sowing:485", "Леонардо"],
+    [163, "sowing:484", "Богатырь Илюша"],
+    [165, "sowing:427", "Каркиано"],
+    [169, "sowing:471", "Брендивайн из Хорватии"],
+    [171, "sowing:452", "Бриллиант Опедисано"],
+    [172, "sowing:408", "Гном Гордость Перта"],
+    [178, "sowing:448", "Очень Красивая Дордонь"],
+    [183, "sowing:477", "Белокурихинские Оранжевые"],
+    [189, "sowing:450", "Гигант Пальмиро Алессандро"],
+    [197, "sowing:430", "Назаре"],
+    [199, "sowing:457", "Карлик Дитона"],
+    [201, "sowing:440", "Изумрудный Дождь"],
+    [209, "sowing:423", "Фриульский гигант"],
+    [217, "sowing:432", "Малахитовый Эльф"],
+    [220, "sowing:463", "Бета томат от Норфолк"],
+    [224, "sowing:466", "Килограммовый из Гарфаньяны"],
+    [225, "sowing:456", "Гном BSP"],
+    [226, "sowing:422", "Антико Канестрино из Лукки"],
+    [249, "sowing:401", "Бронзовое Сердце Ангела"],
+    [259, "sowing:445", "ЧуМаТары"],
+    [260, "sowing:415", "Гном Уэверли"],
+    [261, "sowing:416", "Бергюаз"],
+    [262, "sowing:418", "Манхэттен двухцветный"],
+    [263, "sowing:411", "Гигант Зибенбургена"],
+    [264, "sowing:420", "Красавица Колледжа"],
+    [265, "sowing:407", "Сержант Паскаль"],
+    [266, "sowing:475", "Низами"],
+    [267, "sowing:437", "Жасмина"],
+    [268, "sowing:459", "Super Sweet 100"],
+    [269, "sowing:446", "Гном Гром Гондвана"],
+    [270, "sowing:439", "Дзиновский Ябучар"],
+    [271, "sowing:464", "The Eleven от Норфолк"],
+    [272, "sowing:438", "Джован"],
+    [273, "sowing:460", "Суперстейк от Бёрпи"],
+    [274, "sowing:461", "Вкусный от Бёрпи"],
+  ];
+  const bindingsByKey = new Map(currentNewBindings.map(([id, key, title]) => [key, {id, title}]));
+  const currentNewIds = new Set(currentNewBindings.map(([id]) => id));
   const byKey = Object.create(null);
   const byCatalogId = Object.create(null);
+  const byTitle = Object.create(null);
+  function normalizeTitle(title) {
+    return String(title ?? '').replace(/\[(?:hit|new)\]/gi, '').normalize('NFC')
+      .toLocaleLowerCase('ru-RU').replace(/ё/g, 'е').replace(/\s+/g, ' ').trim();
+  }
+  function bindTitle(title, profile) {
+    const key = normalizeTitle(title);
+    if (!key) return;
+    if (byTitle[key] === undefined) byTitle[key] = profile;
+    else if (byTitle[key] !== profile) byTitle[key] = null;
+  }
   for (const profile of profiles) {
+    const binding = bindingsByKey.get(profile.key);
+    if (binding) profile.catalogId = binding.id;
+    else if (currentNewIds.has(profile.catalogId)) profile.catalogId = null;
     byKey[profile.key] = profile;
     if (profile.catalogId !== null) byCatalogId[String(profile.catalogId)] = profile;
+    bindTitle(profile.name, profile);
+    if (binding) bindTitle(binding.title, profile);
   }
   function deepFreeze(value) {
     if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -309,6 +412,12 @@ const profiles=[
     // Никакого сопоставления по похожим названиям во время подбора.
     const key = explicitNewBindings && explicitNewBindings[id];
     return key && byKey[key] || null;
+  }
+  function getProfileForProduct(product) {
+    // A unique, exact verified title survives renumbering. Never fall back to an
+    // old numeric ID or a fuzzy title when the catalog item has changed.
+    if (!product || typeof product.title !== 'string') return null;
+    return byTitle[normalizeTitle(product.title)] || null;
   }
   // Pure, local selection helpers. Stock/price/cart remain owned by the catalogue.
   function requireCount(count) {
@@ -382,7 +491,7 @@ const profiles=[
     return 'other';
   }
 
-const api=deepFreeze({metadata,profiles,byKey,byCatalogId,getProfile,getCatalogGroup,matchesGrowingPlace,planQuotas});
+const api=deepFreeze({metadata,profiles,byKey,byCatalogId,getProfile,getProfileForProduct,getCatalogGroup,matchesGrowingPlace,planQuotas});
 if(typeof module!=='undefined'&&module.exports) module.exports=api;
 else root.TOMATO_TRAITS_2627=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

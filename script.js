@@ -619,6 +619,9 @@ const catalog = document.getElementById("catalog");
 
 const cartItems = document.getElementById("cartItems");
 
+const clearCartBtn = document.getElementById("clearCartBtn");
+const clearCartDialog = document.getElementById("clearCartDialog");
+
 const sheetItems = document.getElementById("sheetItems");
 
 const cartModal = document.getElementById("cartModal");
@@ -690,6 +693,7 @@ function getPreferredDialogFocus(dialog) {
 }
 
 function syncDialogAccessibility() {
+  if (clearCartDialog?.open && !isDialogVisible(cartModal)) clearCartDialog.close();
   const topDialog = getTopVisibleDialog();
 
   accessibleDialogs.forEach((dialog) => {
@@ -740,6 +744,8 @@ function closeTopDialogFromKeyboard(dialog) {
 }
 
 document.addEventListener("keydown", (event) => {
+  // The native confirmation owns focus and Escape while it is open.
+  if (clearCartDialog?.open) return;
   const dialog = getTopVisibleDialog();
   if (!dialog) return;
 
@@ -1875,6 +1881,11 @@ function updateCart() {
   const checkoutBtn = document.getElementById("checkoutBtn");
 
   const isCartEmpty = cart.length === 0;
+  if (clearCartBtn) clearCartBtn.hidden = isCartEmpty;
+  if (isCartEmpty && clearCartDialog?.open) {
+    clearCartDialog.close();
+    document.getElementById("cartBackBtn")?.focus({ preventScroll: true });
+  }
   checkoutBtn.disabled = isCartEmpty;
   checkoutBtn.classList.toggle("disabled-btn", isCartEmpty);
   checkoutBtn.setAttribute("aria-disabled", isCartEmpty ? "true" : "false");
@@ -1954,6 +1965,47 @@ function renderCart() {
     cartItems.appendChild(div);
   });
 }
+
+/* CLEAR CART */
+
+function canClearCart() {
+  if (!cart.length) return false;
+  if (orderSending || readPendingOrderRequest()) {
+    showToast("Дождитесь подтверждения текущего заказа");
+    return false;
+  }
+  return true;
+}
+
+clearCartBtn?.addEventListener("click", () => {
+  if (!clearCartDialog || clearCartDialog.open || !canClearCart()) return;
+  vibrate(15);
+  clearCartDialog.showModal();
+});
+
+document.getElementById("clearCartNo")?.addEventListener("click", () => clearCartDialog?.close());
+
+document.getElementById("clearCartYes")?.addEventListener("click", () => {
+  if (!clearCartDialog?.open) return;
+  if (!canClearCart()) {
+    clearCartDialog.close();
+    return;
+  }
+  clearCartDialog.close();
+  cart = [];
+  rejectedOrderItems = [];
+  if (cartRemovalNotices.length) document.getElementById("dismissCartRemovalNotice")?.click();
+  updateCart();
+  document.getElementById("cartBackBtn")?.focus({ preventScroll: true });
+  showToast("Корзина очищена");
+});
+
+clearCartDialog?.addEventListener("click", (event) => {
+  if (event.target !== clearCartDialog) return;
+  const rect = clearCartDialog.getBoundingClientRect();
+  if (event.clientX < rect.left || event.clientX > rect.right ||
+      event.clientY < rect.top || event.clientY > rect.bottom) clearCartDialog.close();
+});
 
 /* OPEN CART */
 
@@ -4782,7 +4834,7 @@ if (pendingSheetData) {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register("./sw.js?v=133");
+    navigator.serviceWorker.register("./sw.js?v=134");
   });
 }
 

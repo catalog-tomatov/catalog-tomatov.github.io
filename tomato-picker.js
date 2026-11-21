@@ -5,14 +5,11 @@
   else { root.TomatoPicker = api; api.mount(); }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (traits) {
   'use strict';
-  // Bind actual catalog IDs here when the new sowing varieties are published.
-  // Sowing numbers and fuzzy name matches are never catalog identities.
-  const newBindings = Object.freeze({});
   const features = [['colors', 3], ['size', 3], ['shapes', 2.5], ['habit', 1.5],
     ['maturity', 1], ['uses', 1], ['patterns', .75], ['growth', .5],
     ['flavourNotes', .5], ['texture', .5], ['extraTraits', .5]];
   const distanceCache = new Map();
-  const profileFor = product => traits.getProfile(product.id, newBindings);
+  const profileFor = product => traits.getProfileForProduct(product);
   function getEligibleProducts(products, cart, place) {
     const excluded = new Set(cart.map(p => String(p.id)));
     const excludedProfiles = new Set(cart.map(profileFor).filter(Boolean).map(p => p.key));
