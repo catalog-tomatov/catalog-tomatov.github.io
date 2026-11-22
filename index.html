@@ -28,7 +28,7 @@
 
   <link
     rel="stylesheet"
-  href="style.css?v=77"
+  href="style.css?v=78"
   />
 
 <link rel="stylesheet" href="tomato-picker.css?v=3">
@@ -509,21 +509,13 @@ content="summary_large_image">
     type="button"
     class="pickup-trigger"
     id="pickupTrigger"
-    aria-haspopup="listbox"
+    aria-haspopup="dialog"
     aria-expanded="false"
-    aria-controls="pickupMenu"
+    aria-controls="pickupDialog"
     aria-describedby="pickupPointError"
   >
     Выберите точку выдачи
   </button>
-
-  <div
-    class="pickup-menu"
-    id="pickupMenu"
-    role="listbox"
-    aria-label="Точки выдачи"
-  >
-  </div>
 
   <div id="pickupPointError" class="field-error" aria-live="polite"></div>
 
@@ -552,6 +544,17 @@ content="summary_large_image">
 
 
   </div>
+
+  <dialog id="pickupDialog" class="pickup-dialog" aria-modal="true" aria-labelledby="pickupDialogTitle">
+    <div class="pickup-dialog-box">
+      <div class="pickup-dialog-heading">
+        <h2 id="pickupDialogTitle">Выберите точку выдачи</h2>
+        <button id="pickupCloseBtn" class="pickup-dialog-close" type="button" aria-label="Закрыть выбор точки выдачи" autofocus>×</button>
+      </div>
+      <div class="pickup-menu" id="pickupMenu" role="listbox" aria-label="Точки выдачи"></div>
+      <button id="pickupMoreBtn" class="pickup-more" type="button" hidden>Показать ещё точки ↓</button>
+    </div>
+  </dialog>
 
  <!-- SHEET -->
 
@@ -1188,7 +1191,7 @@ content="summary_large_image">
   <p id="pickerError" class="picker-error" role="alert" hidden></p>
 </dialog>
 
-<script src="script.js?v=102"></script>
+<script src="script.js?v=103"></script>
 <script src="tomato-traits-2627.js?v=2"></script>
 <script src="tomato-picker.js?v=3"></script>
 <script src="chat.js?v=20261014-sync31"></script>

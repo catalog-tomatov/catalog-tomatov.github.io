@@ -621,6 +621,7 @@ const cartItems = document.getElementById("cartItems");
 
 const clearCartBtn = document.getElementById("clearCartBtn");
 const clearCartDialog = document.getElementById("clearCartDialog");
+const pickupDialog = document.getElementById("pickupDialog");
 
 const sheetItems = document.getElementById("sheetItems");
 
@@ -694,6 +695,7 @@ function getPreferredDialogFocus(dialog) {
 
 function syncDialogAccessibility() {
   if (clearCartDialog?.open && !isDialogVisible(cartModal)) clearCartDialog.close();
+  if (isPickupMenuOpen() && !isDialogVisible(checkoutModal)) setPickupMenuOpen(false);
   const topDialog = getTopVisibleDialog();
 
   accessibleDialogs.forEach((dialog) => {
@@ -728,7 +730,8 @@ function syncDialogAccessibility() {
 }
 
 function closeTopDialogFromKeyboard(dialog) {
-  if (dialog.id === "cartModal") document.getElementById("cartBackBtn").click();
+  if (dialog.id === "pickupDialog") dismissPickupMenu();
+  else if (dialog.id === "cartModal") document.getElementById("cartBackBtn").click();
   else if (dialog.id === "checkoutModal") document.getElementById("checkoutBackBtn").click();
   else if (dialog.id === "popup") document.getElementById("popupBack").click();
   else if (dialog.id === "savedOrdersModal") document.getElementById("closeSavedOrdersBtn").click();
@@ -745,8 +748,8 @@ function closeTopDialogFromKeyboard(dialog) {
 
 document.addEventListener("keydown", (event) => {
   // The native confirmation owns focus and Escape while it is open.
-  if (clearCartDialog?.open) return;
-  const dialog = getTopVisibleDialog();
+  if (clearCartDialog?.open || (isPickupMenuOpen() && !pickupDialog.hasAttribute("data-fallback"))) return;
+  const dialog = isPickupMenuOpen() ? pickupDialog : getTopVisibleDialog();
   if (!dialog) return;
 
   if (event.key === "Escape") {
@@ -2804,6 +2807,8 @@ const pvzAddress = document.getElementById("pvzAddress");
 const pickupTrigger = document.getElementById("pickupTrigger");
 
 const pickupMenu = document.getElementById("pickupMenu");
+const pickupCloseBtn = document.getElementById("pickupCloseBtn");
+const pickupMoreBtn = document.getElementById("pickupMoreBtn");
 
 document.getElementById("pickupPoint").selectedIndex = 0;
 
@@ -2811,7 +2816,7 @@ pickupPoint.value = "";
 
 pickupTrigger.textContent = "Выберите точку выдачи";
 
-pickupMenu.classList.remove("open");
+pickupTrigger.setAttribute("aria-expanded", "false");
 
 pickupPoint.addEventListener("change", () => {
   syncPickupMenuSelection();
@@ -2914,8 +2919,7 @@ function resetCheckoutAfterSuccessfulOrder() {
   pickupPoint.value = "";
   pvzAddress.value = "";
   pickupTrigger.textContent = "Выберите точку выдачи";
-  pickupMenu.classList.remove("open");
-  pickupTrigger.setAttribute("aria-expanded", "false");
+  setPickupMenuOpen(false);
 
   [nameInput, phoneInput, pickupTrigger, pvzAddress].forEach(clearCheckoutFieldError);
   setCheckoutIdentityFieldsVisible(true);
@@ -3002,6 +3006,7 @@ function setCheckoutIdentityFieldsVisible(visible) {
   if (visible) {
     setPvzAddressVisibility();
   } else {
+    setPickupMenuOpen(false);
     pvzAddressField.hidden = true;
   }
 }
@@ -3024,14 +3029,93 @@ function syncPickupMenuSelection() {
   });
 }
 
-function setPickupMenuOpen(open, focusOption = false) {
-  pickupMenu.classList.toggle("open", open);
-  pickupTrigger.setAttribute("aria-expanded", open ? "true" : "false");
+function isPickupMenuOpen() {
+  return Boolean(pickupDialog?.hasAttribute("open"));
+}
 
-  if (open && focusOption) {
-    const options = getPickupMenuOptions();
-    const selected = options.find((option) => option.dataset.value === pickupPoint.value);
-    (selected || options[0])?.focus();
+function refreshPickupMoreButton() {
+  if (!isPickupMenuOpen()) return;
+  pickupMoreBtn.hidden = true;
+  pickupMoreBtn.hidden = pickupMenu.scrollHeight <= pickupMenu.clientHeight + 2;
+  syncPickupMoreDirection();
+}
+
+function syncPickupMoreDirection() {
+  if (!isPickupMenuOpen() || pickupMoreBtn.hidden) return;
+  const remaining = pickupMenu.scrollHeight - pickupMenu.clientHeight - pickupMenu.scrollTop;
+  pickupMoreBtn.textContent = remaining > 2
+    ? "Показать ещё точки ↓"
+    : "К первым точкам ↑";
+}
+
+function scrollPickupMenu() {
+  if (!isPickupMenuOpen() || pickupMoreBtn.hidden) return;
+  const maxTop = Math.max(0, pickupMenu.scrollHeight - pickupMenu.clientHeight);
+  let target = 0;
+  if (maxTop - pickupMenu.scrollTop > 2) {
+    const bounds = pickupMenu.getBoundingClientRect();
+    const next = getPickupMenuOptions().find((option) => option.getBoundingClientRect().bottom > bounds.bottom + 1);
+    target = next
+      ? pickupMenu.scrollTop + next.getBoundingClientRect().top - bounds.top
+      : maxTop;
+    if (target <= pickupMenu.scrollTop + 2) {
+      target = pickupMenu.scrollTop + Math.max(48, pickupMenu.clientHeight - 44);
+    }
+    target = Math.min(maxTop, target);
+  }
+  const behavior = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+  if (typeof pickupMenu.scrollTo === "function") pickupMenu.scrollTo({ top: target, behavior });
+  else pickupMenu.scrollTop = target;
+  syncPickupMoreDirection();
+}
+
+function setPickupMenuOpen(open, focusOption = false) {
+  if (!open) {
+    if (isPickupMenuOpen()) {
+      if (pickupDialog.hasAttribute("data-fallback")) {
+        pickupDialog.removeAttribute("open");
+        pickupDialog.removeAttribute("data-fallback");
+        checkoutModal.setAttribute("aria-hidden", isDialogVisible(checkoutModal) ? "false" : "true");
+      } else {
+        pickupDialog.close();
+      }
+    }
+    pickupTrigger.setAttribute("aria-expanded", "false");
+    pickupMoreBtn.hidden = true;
+    return;
+  }
+  if (isPickupMenuOpen() || orderSending || !isDialogVisible(checkoutModal) ||
+      pickupTrigger.closest(".pickup-dropdown").hidden) return;
+  pickupMoreBtn.hidden = true;
+  pickupTrigger.setAttribute("aria-expanded", "true");
+  if (typeof pickupDialog.showModal === "function") {
+    pickupDialog.showModal();
+  } else {
+    pickupDialog.setAttribute("data-fallback", "");
+    pickupDialog.setAttribute("open", "");
+    checkoutModal.setAttribute("aria-hidden", "true");
+    pickupCloseBtn.focus();
+  }
+  pickupMenu.scrollTop = 0;
+  refreshPickupMoreButton();
+  const options = getPickupMenuOptions();
+  const selected = options.find((option) => option.dataset.value === pickupPoint.value);
+  if (selected || focusOption) {
+    (selected || options[0])?.focus({ preventScroll: true });
+    if (selected) {
+      const bounds = pickupMenu.getBoundingClientRect();
+      const item = selected.getBoundingClientRect();
+      if (item.bottom > bounds.bottom) pickupMenu.scrollTop += item.bottom - bounds.bottom;
+      syncPickupMoreDirection();
+    }
+  }
+  requestAnimationFrame(refreshPickupMoreButton);
+}
+
+function dismissPickupMenu() {
+  setPickupMenuOpen(false);
+  if (isDialogVisible(checkoutModal) && !pickupTrigger.closest(".pickup-dropdown").hidden) {
+    pickupTrigger.focus({ preventScroll: true });
   }
 }
 
@@ -3052,8 +3136,7 @@ function initializePickupDropdown() {
       option.addEventListener("click", () => {
         pickupPoint.value = option.dataset.value;
         pickupPoint.dispatchEvent(new Event("change", { bubbles: true }));
-        setPickupMenuOpen(false);
-        pickupTrigger.focus();
+        dismissPickupMenu();
       });
 
       option.addEventListener("keydown", (event) => {
@@ -3070,10 +3153,6 @@ function initializePickupDropdown() {
         } else if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           option.click();
-        } else if (event.key === "Escape") {
-          event.preventDefault();
-          setPickupMenuOpen(false);
-          pickupTrigger.focus();
         }
       });
 
@@ -3081,7 +3160,7 @@ function initializePickupDropdown() {
     });
 
   pickupTrigger.addEventListener("click", () => {
-    setPickupMenuOpen(!pickupMenu.classList.contains("open"));
+    setPickupMenuOpen(!isPickupMenuOpen());
   });
 
   pickupTrigger.addEventListener("keydown", (event) => {
@@ -3091,8 +3170,23 @@ function initializePickupDropdown() {
     }
   });
 
-  document.addEventListener("click", (event) => {
-    if (!event.target.closest(".pickup-dropdown")) setPickupMenuOpen(false);
+  pickupCloseBtn.addEventListener("click", dismissPickupMenu);
+  pickupMoreBtn.addEventListener("click", scrollPickupMenu);
+  pickupMenu.addEventListener("scroll", syncPickupMoreDirection, { passive: true });
+  window.addEventListener("resize", refreshPickupMoreButton, { passive: true });
+  window.visualViewport?.addEventListener("resize", refreshPickupMoreButton, { passive: true });
+  pickupDialog.addEventListener("click", (event) => {
+    if (event.target === pickupDialog) dismissPickupMenu();
+  });
+  pickupDialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    dismissPickupMenu();
+  });
+  pickupDialog.addEventListener("close", () => {
+    if (!isPickupMenuOpen()) {
+      pickupTrigger.setAttribute("aria-expanded", "false");
+      pickupMoreBtn.hidden = true;
+    }
   });
 
   syncPickupMenuSelection();
@@ -4432,7 +4526,7 @@ infoToggle.addEventListener("click", () => {
 
   const fly = document.createElement("img");
 
-  fly.src = "./tomato/info-popup.png";
+  fly.src = "./tomato/info-popup.png?v=20261122-info2";
 
   fly.className = "info-fly";
 
@@ -4846,7 +4940,7 @@ if (pendingSheetData) {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register("./sw.js?v=135");
+    navigator.serviceWorker.register("./sw.js?v=136");
   });
 }
 
