@@ -1978,9 +1978,21 @@ function canClearCart() {
 }
 
 clearCartBtn?.addEventListener("click", () => {
-  if (!clearCartDialog || clearCartDialog.open || !canClearCart()) return;
+  if (!clearCartDialog || clearCartDialog.open ||
+      clearCartBtn.classList.contains("is-pressing") || !canClearCart()) return;
   vibrate(15);
-  clearCartDialog.showModal();
+  const openConfirmation = () => {
+    clearCartBtn.classList.remove("is-pressing");
+    if (clearCartDialog.open || getTopVisibleDialog() !== cartModal ||
+        cartBox.classList.contains("modal-hide") || !canClearCart()) return;
+    clearCartDialog.showModal();
+  };
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    openConfirmation();
+    return;
+  }
+  clearCartBtn.classList.add("is-pressing");
+  setTimeout(openConfirmation, 180);
 });
 
 document.getElementById("clearCartNo")?.addEventListener("click", () => clearCartDialog?.close());
@@ -4834,7 +4846,7 @@ if (pendingSheetData) {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register("./sw.js?v=134");
+    navigator.serviceWorker.register("./sw.js?v=135");
   });
 }
 

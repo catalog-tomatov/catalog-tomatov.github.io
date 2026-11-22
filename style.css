@@ -1395,8 +1395,15 @@ body {
 }
 .cart-clear-btn[hidden] { display: none; }
 .cart-clear-btn svg { transition: transform .16s ease; }
-.cart-clear-btn:active { background: #f6dcd3; }
+.cart-clear-btn:active,
+.cart-clear-btn.is-pressing { background: #f6dcd3; }
 .cart-clear-btn:active svg { transform: rotate(-8deg) scale(.9); }
+.cart-clear-btn.is-pressing svg { animation: cartClearTap .16s ease-out both; }
+@keyframes cartClearTap {
+  0%, 100% { transform: rotate(0) scale(1); }
+  45% { transform: rotate(-14deg) scale(.83); }
+  78% { transform: rotate(5deg) scale(1.05); }
+}
 .cart-clear-btn:focus-visible { outline-color: var(--color-primary); }
 .cart-clear-dialog {
   box-sizing: border-box;
