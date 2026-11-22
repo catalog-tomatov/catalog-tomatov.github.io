@@ -4526,7 +4526,7 @@ infoToggle.addEventListener("click", () => {
 
   const fly = document.createElement("img");
 
-  fly.src = "./tomato/info-popup.webp?v=20261122-info2";
+  fly.src = "./tomato/info-popup.png?v=20261122-info3";
 
   fly.className = "info-fly";
 
