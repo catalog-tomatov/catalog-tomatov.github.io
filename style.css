@@ -1864,25 +1864,7 @@ body {
   position: relative;
 }
 
-.pickup-trigger::after {
-  content: "";
 
-  position: absolute;
-
-  right: 18px;
-
-  width: 8px;
-
-  height: 8px;
-
-  border-right: 3px solid var(--color-primary);
-
-  border-bottom: 3px solid var(--color-primary);
-
-  transform: rotate(45deg) translateY(-1px);
-
-  border-radius: 2px;
-}
 
 .pickup-dialog {
   position: fixed;
