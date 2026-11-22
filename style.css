@@ -1982,7 +1982,7 @@ body {
   border-radius: 16px;
   background: transparent;
   color: #140093;
-  font: 700 19px/1.2 "Fira Sans", Arial, sans-serif;
+  font: 700 21px/1.2 "Fira Sans", Arial, sans-serif;
   letter-spacing: .8px;
   text-align: center;
   cursor: pointer;
@@ -3745,7 +3745,7 @@ canvas {
   .pickup-trigger {
     height: 52px;
 
-    font-size: 17px;
+    font-size: 21px;
   }
 
   #createOrderBtn {
