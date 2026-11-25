@@ -39,6 +39,7 @@ const CHAT_PAYMENT = {
 
   const CHAT_TARGET_IMAGE_BYTES = 350 * 1024;
   const CHAT_ATTACHMENT_LIMIT = 1024 * 1024;
+  const CHAT_ATTACHMENT_PREPARE_TIMEOUT_MS = 12000;
   const CHAT_ATTACHMENT_CACHE_MAX = 10;
   const chatApiUrl = () => `${CATALOG_API_URL}?chat=1`;
 
@@ -65,6 +66,8 @@ const CHAT_PAYMENT = {
     chatCache: new Map(),
     current: null,
     pendingFile: null,
+    preparingAttachment: null,
+    sendingAttachments: 0,
     shareOrderId: "",
     pollTimer: 0,
     chatActivityAt: 0,
@@ -354,8 +357,10 @@ const CHAT_PAYMENT = {
     state.draftAccessPrimed.add(key);
     void verifyChatAccessForSend(orderId, chatToken, true).catch((error) => {
       state.draftAccessPrimed.delete(key);
-      if (error?.code === "ORDER_NOT_FOUND") {
-        elements.sendChat.disabled = true;
+      if (error?.code === "ORDER_NOT_FOUND" && state.current === current) {
+        current.sendBlocked = true;
+        clearPendingFile();
+        updateChatSendButton();
         setChatError("Заказ удалён из таблицы. Отправка недоступна.");
       }
     });
@@ -2613,6 +2618,7 @@ async function resumeOutboxForCurrentChat() {
   state.sellerRevealTimer = 0;
   }
 
+  if (!sameChat || state.preparingAttachment) clearPendingFile();
   state.current = {
   order,
   access: previousCurrent?.access || null,
@@ -2620,6 +2626,7 @@ async function resumeOutboxForCurrentChat() {
   sellerRevealAt: previousCurrent?.sellerRevealAt || 0,
   maxWarningDismissed: false,
   };
+    updateChatSendButton();
     const openingChat = state.current;
     elements.chatTitle.textContent = `Чат по заказу ${normalizeOrderId(order.orderId)}`;
     elements.chatCustomer.textContent = order.name || "";
@@ -2776,6 +2783,7 @@ async function resumeOutboxForCurrentChat() {
     } catch (error) {
       if (state.current !== openingChat) return;
       if (error?.code === "ORDER_NOT_FOUND") {
+        clearPendingFile();
         state.current = null;
         elements.chatMessages.replaceChildren();
         delete elements.chatMessages.dataset.orderId;
@@ -2806,6 +2814,7 @@ async function resumeOutboxForCurrentChat() {
     clearPendingFile();
     if (elements.maxWarning) elements.maxWarning.hidden = true;
     state.current = null;
+    updateChatSendButton();
     state.objectUrls.forEach((url) => URL.revokeObjectURL(url));
     state.objectUrls.clear();
     hideOverlay(elements.chatModal);
@@ -3550,6 +3559,7 @@ return card;
     } catch (error) {
       if (state.current !== pollingChat) return;
       if (error?.code === "ORDER_NOT_FOUND") {
+        clearPendingFile();
         state.current = null;
         elements.chatMessages.replaceChildren();
         delete elements.chatMessages.dataset.orderId;
@@ -3571,14 +3581,53 @@ return card;
   }
 
   function clearPendingFile() {
+    const preparation = state.preparingAttachment;
+    if (preparation) {
+      state.preparingAttachment = null;
+      clearTimeout(preparation.timer);
+      preparation.controller.abort();
+    }
     state.pendingFile = null;
     elements.chatFile.value = "";
     elements.chatFilePreview.hidden = true;
     elements.chatFileName.textContent = "";
+    updateChatSendButton();
   }
 
-  async function fileToBase64(blob) {
-    const bytes = new Uint8Array(await blob.arrayBuffer());
+  function updateChatSendButton() {
+    elements.sendChat.disabled = Boolean(
+      state.preparingAttachment || state.sendingAttachments > 0 || state.current?.sendBlocked
+    );
+  }
+
+  function attachmentAbortError(signal) {
+    return new Error(signal?.reason?.message || "Подготовка файла прервана. Попробуйте ещё раз.");
+  }
+
+  function waitForAttachmentStep(promise, signal, disposeLate) {
+    if (!signal) return Promise.resolve(promise);
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (callback, value) => {
+        if (settled) return false;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        callback(value);
+        return true;
+      };
+      const onAbort = () => finish(reject, attachmentAbortError(signal));
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+      Promise.resolve(promise).then(value => {
+        if (!finish(resolve, value) && disposeLate) {
+          try { disposeLate(value); } catch { /* The canceled file is no longer needed. */ }
+        }
+      }, error => finish(reject, error));
+    });
+  }
+
+  async function fileToBase64(blob, signal) {
+    const bytes = new Uint8Array(await waitForAttachmentStep(blob.arrayBuffer(), signal));
     let binary = "";
     for (let offset = 0; offset < bytes.length; offset += 0x8000) {
       binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
@@ -3586,13 +3635,15 @@ return card;
     return btoa(binary);
   }
 
-  async function canvasToWebp(canvas, quality) {
-    return new Promise((resolve) => canvas.toBlob(resolve, "image/webp", quality));
+  async function canvasToWebp(canvas, quality, signal) {
+    return waitForAttachmentStep(new Promise((resolve) => canvas.toBlob(resolve, "image/webp", quality)), signal);
   }
 
-  async function decodeChatImage(file) {
+  async function decodeChatImage(file, signal) {
     try {
-      const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+      const bitmap = await waitForAttachmentStep(
+        createImageBitmap(file, { imageOrientation: "from-image" }), signal, late => late.close?.()
+      );
       return {
         source: bitmap,
         width: bitmap.width,
@@ -3600,29 +3651,39 @@ return card;
         close: () => bitmap.close?.(),
       };
     } catch (bitmapError) {
+      if (signal?.aborted) throw attachmentAbortError(signal);
       const objectUrl = URL.createObjectURL(file);
       const image = new Image();
       image.decoding = "async";
+      const close = () => {
+        image.onload = null;
+        image.onerror = null;
+        image.removeAttribute("src");
+        URL.revokeObjectURL(objectUrl);
+      };
       try {
-        await new Promise((resolve, reject) => {
+        await waitForAttachmentStep(new Promise((resolve, reject) => {
           image.onload = resolve;
           image.onerror = () => reject(bitmapError || new Error("IMAGE_DECODE_FAILED"));
           image.src = objectUrl;
-        });
+        }), signal);
         return {
           source: image,
           width: image.naturalWidth,
           height: image.naturalHeight,
-          close: () => URL.revokeObjectURL(objectUrl),
+          close,
         };
       } catch (error) {
-        URL.revokeObjectURL(objectUrl);
+        close();
         throw error;
+      } finally {
+        image.onload = null;
+        image.onerror = null;
       }
     }
   }
 
-  async function prepareImageAttachment(file) {
+  async function prepareImageAttachment(file, signal) {
     if (
       file.size <= CHAT_ATTACHMENT_LIMIT
       && /^(image\/(?:jpeg|png|webp))$/i.test(file.type)
@@ -3631,15 +3692,19 @@ return card;
         mime: file.type.toLowerCase(),
         fileName: file.name || "Изображение",
         sizeBytes: file.size,
-        base64: await fileToBase64(file),
+        base64: await fileToBase64(file, signal),
       };
     }
     let decoded;
     try {
-      decoded = await decodeChatImage(file);
+      decoded = await decodeChatImage(file, signal);
     } catch {
+      if (signal?.aborted) throw attachmentAbortError(signal);
       throw new Error("Не удалось открыть изображение. Для HEIC отправьте скриншот или сохраните файл как JPG/PNG.");
     }
+    let canvas = null;
+    try {
+    if (signal?.aborted) throw attachmentAbortError(signal);
     let width = decoded.width;
     let height = decoded.height;
     const maxSide = 1600;
@@ -3648,8 +3713,9 @@ return card;
       width = Math.max(1, Math.round(width * ratio));
       height = Math.max(1, Math.round(height * ratio));
     }
-    const canvas = document.createElement("canvas");
+    canvas = document.createElement("canvas");
     const context = canvas.getContext("2d", { alpha: false });
+    if (!context) throw new Error("Не удалось обработать фото. Попробуйте отправить скриншот.");
     let quality = 0.84;
     let blob = null;
     for (let attempt = 0; attempt < 10; attempt++) {
@@ -3658,7 +3724,7 @@ return card;
       context.fillStyle = "#ffffff";
       context.fillRect(0, 0, width, height);
       context.drawImage(decoded.source, 0, 0, width, height);
-      blob = await canvasToWebp(canvas, quality);
+      blob = await canvasToWebp(canvas, quality, signal);
       if (blob && blob.size <= CHAT_TARGET_IMAGE_BYTES) break;
       if (quality > 0.54) quality -= 0.08;
       else {
@@ -3666,20 +3732,32 @@ return card;
         height = Math.max(400, Math.round(height * 0.84));
       }
     }
-    decoded.close();
     if (!blob || blob.size > CHAT_ATTACHMENT_LIMIT) {
       throw new Error("Не удалось уменьшить изображение до 1 МБ.");
     }
+    const mime = String(blob.type || "image/webp").toLowerCase();
+    if (!/^(image\/(?:jpeg|png|webp))$/.test(mime)) {
+      throw new Error("Не удалось обработать фото. Попробуйте отправить скриншот.");
+    }
+    const extension = mime === "image/png" ? "png" : mime === "image/jpeg" ? "jpg" : "webp";
     const baseName = file.name.replace(/\.[^.]+$/, "") || "Изображение";
     return {
-      mime: "image/webp",
-      fileName: `${baseName}.webp`,
+      mime,
+      fileName: `${baseName}.${extension}`,
       sizeBytes: blob.size,
-      base64: await fileToBase64(blob),
+      base64: await fileToBase64(blob, signal),
     };
+    } finally {
+      try { decoded.close(); } finally {
+        if (canvas) {
+          canvas.width = 0;
+          canvas.height = 0;
+        }
+      }
+    }
   }
 
-  async function prepareAttachment(file) {
+  async function prepareAttachment(file, signal) {
     if (file.type === "application/pdf") {
       if (file.size > CHAT_ATTACHMENT_LIMIT) {
         throw new Error("Файл слишком большой. Максимальный размер — 1 МБ.");
@@ -3688,23 +3766,33 @@ return card;
         mime: "application/pdf",
         fileName: file.name || "Чек.pdf",
         sizeBytes: file.size,
-        base64: await fileToBase64(file),
+        base64: await fileToBase64(file, signal),
       };
     }
     if (file.type.startsWith("image/") || /\.(heic|heif)$/i.test(file.name)) {
-      return prepareImageAttachment(file);
+      return prepareImageAttachment(file, signal);
     }
     throw new Error("Можно отправить JPG, PNG, WebP, поддерживаемый HEIC или PDF.");
   }
 
   async function selectChatFile(file) {
-    if (!file) return;
+    if (!file || !state.current?.access?.chatToken || elements.chatComposer.hidden ||
+        elements.chatFile.disabled || elements.sendChat.disabled || state.preparingAttachment) return;
+    const preparation = { chat: state.current, controller: new AbortController(), timer: 0 };
+    state.preparingAttachment = preparation;
+    state.pendingFile = null;
     setChatError("");
     elements.chatFilePreview.hidden = false;
     elements.chatFileName.textContent = "Подготавливаем файл…";
-    elements.sendChat.disabled = true;
+    updateChatSendButton();
+    preparation.timer = setTimeout(() => preparation.controller.abort(
+      new Error("Подготовка файла заняла слишком много времени. Попробуйте отправить скриншот чека.")
+    ), CHAT_ATTACHMENT_PREPARE_TIMEOUT_MS);
+    const isCurrent = () => state.preparingAttachment === preparation && state.current === preparation.chat;
     try {
-      const prepared = await prepareAttachment(file);
+      const signal = preparation.controller.signal;
+      const prepared = await waitForAttachmentStep(prepareAttachment(file, signal), signal);
+      if (!isCurrent()) return;
       const remaining = attachmentRemainingForPayload(state.current?.payload);
       if (prepared.sizeBytes > remaining) {
         throw new Error("Для этого файла не хватает оставшегося места в чате.");
@@ -3712,11 +3800,31 @@ return card;
       state.pendingFile = prepared;
       elements.chatFileName.textContent = `${prepared.fileName} · ${formatBytes(prepared.sizeBytes)}`;
     } catch (error) {
+      if (!isCurrent()) return;
       clearPendingFile();
       setChatError(error.message || "Не удалось подготовить файл.");
     } finally {
-      elements.sendChat.disabled = false;
+      clearTimeout(preparation.timer);
+      if (state.preparingAttachment === preparation) {
+        state.preparingAttachment = null;
+        updateChatSendButton();
+      }
     }
+  }
+
+  function pasteChatImage(event) {
+    const clipboard = event.clipboardData;
+    if (!clipboard) return;
+    let image = null;
+    for (const item of Array.from(clipboard.items || [])) {
+      if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+      image = item.getAsFile();
+      if (image) break;
+    }
+    image ||= Array.from(clipboard.files || []).find(file => file.type.startsWith("image/")) || null;
+    if (!image) return;
+    event.preventDefault();
+    void selectChatFile(image);
   }
 
   function buildOptimisticMessage(
@@ -3771,7 +3879,8 @@ function queuedDelivery(request) {
   event.preventDefault();
 
   if (
-    !state.current?.access?.chatToken
+    !state.current?.access?.chatToken || state.preparingAttachment ||
+    state.sendingAttachments > 0 || state.current?.sendBlocked
   ) {
     return;
   }
@@ -3947,7 +4056,8 @@ function queuedDelivery(request) {
 
   const blocksComposer = Boolean(request.attachment);
   if (blocksComposer) {
-    elements.sendChat.disabled = true;
+    state.sendingAttachments++;
+    updateChatSendButton();
   }
 
   try {
@@ -4193,7 +4303,8 @@ function queuedDelivery(request) {
     }
   } finally {
     if (blocksComposer) {
-      elements.sendChat.disabled = false;
+      state.sendingAttachments = Math.max(0, state.sendingAttachments - 1);
+      updateChatSendButton();
     }
   }
 }
@@ -4356,7 +4467,12 @@ function queuedDelivery(request) {
     elements.chatInput.style.height = "auto";
     elements.chatInput.style.height = `${Math.min(elements.chatInput.scrollHeight, 116)}px`;
   });
-  elements.chatFile?.addEventListener("change", () => void selectChatFile(elements.chatFile.files?.[0]));
+  elements.chatInput?.addEventListener("paste", pasteChatImage);
+  elements.chatFile?.addEventListener("change", () => {
+    const file = elements.chatFile.files?.[0] || null;
+    elements.chatFile.value = "";
+    void selectChatFile(file);
+  });
   elements.removeChatFile?.addEventListener("click", clearPendingFile);
   elements.closeRestore?.addEventListener("click", () => hideOverlay(elements.restoreModal));
   elements.restoreModal?.addEventListener("click", (event) => {
