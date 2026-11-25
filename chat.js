@@ -371,7 +371,7 @@ const CHAT_PAYMENT = {
     return savedOrders.find((order) => normalizeOrderId(order.orderId) === normalized) || null;
   }
 
-  function updateSavedOrderFromSnapshot(orderIdValue, order, seasonId = "") {
+  function updateSavedOrderFromSnapshot(orderIdValue, order, seasonId = "", confirmedPickup) {
     const saved = findSavedOrder(orderIdValue);
     if (!saved || !order) return false;
 
@@ -387,11 +387,16 @@ const CHAT_PAYMENT = {
     const nextTotalItems = Number(order.itemCount) || 0;
     const nextName = typeof order.name === "string" && order.name.trim()
       ? order.name.trim() : saved.name;
+    // Only a confirmed Sheets summary refreshes the pickup. Old chat snapshots
+    // and status-only updates must not replace the customer's address.
+    const nextPickup = typeof confirmedPickup === "string" && confirmedPickup.trim()
+      ? confirmedPickup.trim() : saved.pickup;
     const paymentFields = ["status", "statusLabel", "prepayment", "debt", "issued"];
     const paymentChanged = paymentFields.some(field => order[field] != null && saved[field] !== order[field]);
     const changed =
       paymentChanged ||
       saved.name !== nextName ||
+      saved.pickup !== nextPickup ||
       Number(saved.total) !== nextTotal ||
       Number(saved.totalItems) !== nextTotalItems ||
       JSON.stringify(saved.items || []) !== JSON.stringify(nextItems || []);
@@ -399,6 +404,7 @@ const CHAT_PAYMENT = {
     saved.schemaVersion = 2;
     if (seasonId) saved.seasonId = seasonId;
     saved.name = nextName;
+    if (saved.pickup !== nextPickup) saved.pickup = nextPickup;
     saved.total = nextTotal;
     saved.totalItems = nextTotalItems;
     saved.items = nextItems;
@@ -1739,7 +1745,9 @@ async function removeOutboxRequest(
         item.summary = preserveNewerChatPreview(state.summaries.get(key), item.summary);
         state.summaries.set(key, item.summary);
 
-        updateSavedOrderFromSnapshot(key, item.order, result.seasonId);
+        const confirmedPickup = requestedIdentities.get(key) === savedIdentity(findSavedOrder(key))
+          ? item.order?.pickup : undefined;
+        updateSavedOrderFromSnapshot(key, item.order, result.seasonId, confirmedPickup);
       });
       await Promise.all(returnedSummaries.map(async (item) => {
         const itemOrderId = item.order?.orderId || item.summary?.orderId;
