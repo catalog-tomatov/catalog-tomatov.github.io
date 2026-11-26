@@ -5394,12 +5394,33 @@ canvas {
 }
 
 .order-chat-attach {
+  position: relative;
+  overflow: hidden;
   width: 38px;
   background: #f4eee7;
   color: #9c2c1c;
   font-size: 28px;
   font-weight: 900;
   cursor: pointer;
+}
+
+.order-chat-attach #orderChatFile {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.order-chat-attach:has(#orderChatFile:focus-visible) {
+  outline: 2px solid #9b1801;
+  outline-offset: 2px;
 }
 
 .order-chat-send {
