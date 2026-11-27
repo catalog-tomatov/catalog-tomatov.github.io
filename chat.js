@@ -3364,7 +3364,10 @@ return card;
       usedBytes += Math.max(0, Number(attachment?.sizeBytes) || 0);
     });
     const historyRemaining = Math.max(0, CHAT_ATTACHMENT_LIMIT - usedBytes);
-    const serverRemaining = Number(payload?.summary?.attachmentRemainingBytes);
+    const rawServerRemaining = payload?.summary?.attachmentRemainingBytes;
+    const serverRemaining = (typeof rawServerRemaining === "number"
+      || (typeof rawServerRemaining === "string" && rawServerRemaining.trim() !== ""))
+      ? Number(rawServerRemaining) : NaN;
     return Number.isFinite(serverRemaining)
       ? Math.min(Math.max(0, serverRemaining), historyRemaining)
       : historyRemaining;
@@ -3691,13 +3694,13 @@ return card;
     }
   }
 
-  async function prepareImageAttachment(file, signal) {
+  async function prepareImageAttachment(file, signal, sourceMime = file.type.toLowerCase()) {
     if (
       file.size <= CHAT_ATTACHMENT_LIMIT
-      && /^(image\/(?:jpeg|png|webp))$/i.test(file.type)
+      && /^(image\/(?:jpeg|png|webp))$/i.test(sourceMime)
     ) {
       return {
-        mime: file.type.toLowerCase(),
+        mime: sourceMime,
         fileName: file.name || "Изображение",
         sizeBytes: file.size,
         base64: await fileToBase64(file, signal),
@@ -3705,7 +3708,9 @@ return card;
     }
     let decoded;
     try {
-      decoded = await decodeChatImage(file, signal);
+      const source = sourceMime && sourceMime !== file.type.toLowerCase()
+        ? file.slice(0, file.size, sourceMime) : file;
+      decoded = await decodeChatImage(source, signal);
     } catch {
       if (signal?.aborted) throw attachmentAbortError(signal);
       throw new Error("Не удалось открыть изображение. Для HEIC отправьте скриншот или сохраните файл как JPG/PNG.");
@@ -3765,8 +3770,24 @@ return card;
     }
   }
 
+  async function resolveChatAttachmentMime(file, signal) {
+    const reported = String(file.type || "").toLowerCase();
+    if (reported === "application/pdf" || reported.startsWith("image/")) return reported;
+
+    // Some mobile file pickers return no MIME or application/octet-stream.
+    // Recognize only supported file signatures, never trust a filename alone.
+    const header = new Uint8Array(await waitForAttachmentStep(file.slice(0, 12).arrayBuffer(), signal));
+    const matches = (offset, bytes) => bytes.every((byte, index) => header[offset + index] === byte);
+    if (matches(0, [0xff, 0xd8, 0xff])) return "image/jpeg";
+    if (matches(0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "image/png";
+    if (matches(0, [0x52, 0x49, 0x46, 0x46]) && matches(8, [0x57, 0x45, 0x42, 0x50])) return "image/webp";
+    if (matches(0, [0x25, 0x50, 0x44, 0x46, 0x2d])) return "application/pdf";
+    return reported;
+  }
+
   async function prepareAttachment(file, signal) {
-    if (file.type === "application/pdf") {
+    const mime = await resolveChatAttachmentMime(file, signal);
+    if (mime === "application/pdf") {
       if (file.size > CHAT_ATTACHMENT_LIMIT) {
         throw new Error("Файл слишком большой. Максимальный размер — 1 МБ.");
       }
@@ -3777,8 +3798,8 @@ return card;
         base64: await fileToBase64(file, signal),
       };
     }
-    if (file.type.startsWith("image/") || /\.(heic|heif)$/i.test(file.name)) {
-      return prepareImageAttachment(file, signal);
+    if (mime.startsWith("image/") || /\.(heic|heif)$/i.test(file.name)) {
+      return prepareImageAttachment(file, signal, mime);
     }
     throw new Error("Можно отправить JPG, PNG, WebP, поддерживаемый HEIC или PDF.");
   }
