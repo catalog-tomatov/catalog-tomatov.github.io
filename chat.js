@@ -115,6 +115,7 @@ const CHAT_PAYMENT = {
     chatMessages: document.getElementById("orderChatMessages"),
     chatComposer: document.getElementById("orderChatComposer"),
     chatInput: document.getElementById("orderChatInput"),
+    chatAttachButton: document.getElementById("orderChatAttachButton"),
     chatFile: document.getElementById("orderChatFile"),
     chatFilePreview: document.getElementById("orderChatFilePreview"),
     chatFileName: document.getElementById("orderChatFileName"),
@@ -3376,9 +3377,11 @@ return card;
   function updateQuota(payload) {
     const safeRemaining = attachmentRemainingForPayload(payload);
     elements.quota.textContent = `Для вложений осталось ${formatBytes(safeRemaining)}`;
-    const attachLabel = document.querySelector(".order-chat-attach");
-    attachLabel?.classList.toggle("disabled", safeRemaining <= 0);
-    elements.chatFile.disabled = safeRemaining <= 0;
+    const disabled = safeRemaining <= 0;
+    const attachControl = elements.chatAttachButton || document.querySelector(".order-chat-attach");
+    attachControl?.classList.toggle("disabled", disabled);
+    if (elements.chatAttachButton) elements.chatAttachButton.disabled = disabled;
+    elements.chatFile.disabled = disabled;
   }
 
   function rememberAttachmentBlob(key, blob) {
@@ -3838,6 +3841,25 @@ return card;
         state.preparingAttachment = null;
         updateChatSendButton();
       }
+    }
+  }
+
+  function openChatFilePicker() {
+    const input = elements.chatFile;
+    if (!input || input.disabled || elements.chatComposer.hidden || !state.current?.access?.chatToken) return;
+
+    // Keep the picker invocation inside the actual button's user gesture.
+    // Older browsers may only implement the native input click activation.
+    try {
+      if (typeof input.showPicker === "function") {
+        input.showPicker();
+        return;
+      }
+    } catch { /* Try the legacy native activation in the same click. */ }
+    try {
+      input.click();
+    } catch {
+      setChatError("Не удалось открыть выбор файла. Попробуйте открыть Каталог в обычном браузере.");
     }
   }
 
@@ -4497,6 +4519,7 @@ function queuedDelivery(request) {
     elements.chatInput.style.height = `${Math.min(elements.chatInput.scrollHeight, 116)}px`;
   });
   elements.chatInput?.addEventListener("paste", pasteChatImage);
+  elements.chatAttachButton?.addEventListener("click", openChatFilePicker);
   elements.chatFile?.addEventListener("change", () => {
     const file = elements.chatFile.files?.[0] || null;
     elements.chatFile.value = "";
